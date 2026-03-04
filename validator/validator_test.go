@@ -20,6 +20,17 @@ type validationTestStructWithJSON struct {
 	Password string `json:"password" validate:"required,min=8"`
 }
 
+type nestedAddress struct {
+	Address1 string `json:"address1" validate:"required"`
+	City     string `json:"city" validate:"required"`
+}
+
+type validationTestStructNested struct {
+	Name        string        `json:"name" validate:"required"`
+	Address     nestedAddress `json:"address" validate:"required"`
+	BankAddress nestedAddress `json:"bankAddress" validate:"required"`
+}
+
 func TestValidate(t *testing.T) {
 	v := Validate()
 	if v == nil {
@@ -325,6 +336,80 @@ func TestInit(t *testing.T) {
 	}
 	if translator == nil {
 		t.Error("expected translator to be initialized")
+	}
+}
+
+func TestNestedStructFieldPaths(t *testing.T) {
+	input := validationTestStructNested{
+		Name:        "John",
+		Address:     nestedAddress{}, // missing address1 and city
+		BankAddress: nestedAddress{Address1: "123 Main St"}, // missing city
+	}
+
+	err := Struct(input)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	valErr, ok := err.(ValidationError)
+	if !ok {
+		t.Fatalf("expected ValidationError, got %T", err)
+	}
+
+	// Collect field paths
+	fields := make(map[string]bool)
+	for _, fe := range valErr.FieldErrors {
+		fields[fe.Field] = true
+	}
+
+	// Should have nested paths like "address.address1", not flat "address1"
+	expectedFields := []string{"address.address1", "address.city", "bankAddress.city"}
+	for _, expected := range expectedFields {
+		if !fields[expected] {
+			t.Errorf("expected field path %q, got fields: %v", expected, fields)
+		}
+	}
+
+	// Should NOT have flat field names for nested fields
+	unexpectedFields := []string{"address1", "city"}
+	for _, unexpected := range unexpectedFields {
+		if fields[unexpected] {
+			t.Errorf("should not have flat field path %q for nested field", unexpected)
+		}
+	}
+}
+
+func TestFlatStructFieldPathsUnchanged(t *testing.T) {
+	// Ensure flat structs still return simple field names (no prefix)
+	input := validationTestStruct{
+		Name:  "",
+		Email: "invalid",
+		Age:   200,
+	}
+
+	err := Struct(input)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	valErr, ok := err.(ValidationError)
+	if !ok {
+		t.Fatalf("expected ValidationError, got %T", err)
+	}
+
+	fields := make(map[string]bool)
+	for _, fe := range valErr.FieldErrors {
+		fields[fe.Field] = true
+	}
+
+	if !fields["name"] {
+		t.Errorf("expected flat field 'name', got fields: %v", fields)
+	}
+	if !fields["email"] {
+		t.Errorf("expected flat field 'email', got fields: %v", fields)
+	}
+	if !fields["age"] {
+		t.Errorf("expected flat field 'age', got fields: %v", fields)
 	}
 }
 

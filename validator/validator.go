@@ -126,7 +126,7 @@ func FormatError(err error) error {
 	var fieldErrors []FieldError
 	for _, e := range validationErrors {
 		fieldErrors = append(fieldErrors, FieldError{
-			Field:   e.Field(),
+			Field:   nestedFieldPath(e),
 			Message: e.Translate(translator),
 		})
 	}
@@ -135,4 +135,17 @@ func FormatError(err error) error {
 		Message:     "Validation failed",
 		FieldErrors: fieldErrors,
 	}
+}
+
+// nestedFieldPath extracts the field path from a validator.FieldError's Namespace,
+// stripping the root struct name. For flat fields it returns "field", for nested
+// fields it returns "parent.field" (e.g., "address.address1").
+func nestedFieldPath(e validator.FieldError) string {
+	ns := e.Namespace()
+	// Namespace format: "StructName.field" or "StructName.parent.field"
+	// Strip the root struct name prefix (everything before the first dot)
+	if idx := strings.Index(ns, "."); idx != -1 {
+		return ns[idx+1:]
+	}
+	return e.Field()
 }
