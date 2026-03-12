@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/kausys/apikit/compare/v0.3.3...v0.4.0) (2026-03-12)
+
+
+### Features
+
+* consolidate from 5 modules to 2 (root + cmd) ([#7](https://github.com/kausys/apikit/issues/7)) ([e81b38e](https://github.com/kausys/apikit/commit/e81b38e2de23f3472047e44355ac50f5a11f222f))
+
 ## [0.3.3](https://github.com/kausys/apikit/compare/v0.3.2...v0.3.3) (2026-03-12)
 
 
