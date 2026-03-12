@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.3](https://github.com/kausys/apikit/compare/v0.3.2...v0.3.3) (2026-03-12)
+
+
+### Bug Fixes
+
+* support fully-qualified import paths for custom types ([#4](https://github.com/kausys/apikit/issues/4)) ([fbdfe38](https://github.com/kausys/apikit/commit/fbdfe38b2c392b166d7fc0a6876e1b9e8c56c863))
+
+
+### Miscellaneous
+
+* add payload sanitization, swagger UI handler, and logging improvements ([#5](https://github.com/kausys/apikit/issues/5)) ([895aeb9](https://github.com/kausys/apikit/commit/895aeb99e964e66bff907e506c291c3080d6cebd))
+
 ## [0.3.2](https://github.com/kausys/apikit/compare/v0.3.1...v0.3.2) (2026-03-12)
 
 
