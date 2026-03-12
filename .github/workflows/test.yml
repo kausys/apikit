@@ -46,7 +46,12 @@ jobs:
       - name: Build
         working-directory: ${{ matrix.module }}
         shell: bash
-        run: go build -o "${RUNNER_TEMP}/" ./...
+        run: |
+          if [ "${{ matrix.module }}" = "cmd" ]; then
+            go build -o "${RUNNER_TEMP}/" ./...
+          else
+            go build ./...
+          fi
 
       - name: Test
         working-directory: ${{ matrix.module }}
