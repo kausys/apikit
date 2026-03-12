@@ -31,16 +31,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-${{ hashFiles(matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module)) }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-
+          cache: false
 
       - name: Download dependencies
         working-directory: ${{ matrix.module }}
