@@ -1,6 +1,7 @@
 package apikit
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 )
@@ -48,7 +49,7 @@ func sanitizeStruct(v reflect.Value, depth int) map[string]any {
 	t := v.Type()
 	result := make(map[string]any, t.NumField())
 
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		field := t.Field(i)
 
 		// Skip unexported fields
@@ -72,9 +73,7 @@ func sanitizeStruct(v reflect.Value, depth int) map[string]any {
 		// Handle embedded structs (anonymous fields)
 		if field.Anonymous && v.Field(i).Kind() == reflect.Struct {
 			embedded := sanitizeStruct(v.Field(i), depth+1)
-			for k, val := range embedded {
-				result[k] = val
-			}
+			maps.Copy(result, embedded)
 			continue
 		}
 
@@ -90,7 +89,7 @@ func sanitizeSlice(v reflect.Value, depth int) any {
 	}
 
 	result := make([]any, v.Len())
-	for i := 0; i < v.Len(); i++ {
+	for i := range v.Len() {
 		result[i] = sanitize(v.Index(i), depth+1)
 	}
 	return result

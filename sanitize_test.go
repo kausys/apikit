@@ -183,13 +183,13 @@ type benchKYCPayload struct {
 }
 
 type benchBankingPayload struct {
-	RoutingNumber       string       `json:"routingNumber" log:"sensitive"`
-	AccountNumber       string       `json:"accountNumber" log:"sensitive"`
-	BankName            string       `json:"bankName"`
-	BankAccountType     string       `json:"bankAccountType"`
-	RdfiNumberQualifier string       `json:"rdfiNumberQualifier"`
-	GatewayRoutingNumber string      `json:"gatewayRoutingNumber" log:"sensitive"`
-	Address             benchAddress `json:"address"`
+	RoutingNumber        string       `json:"routingNumber" log:"sensitive"`
+	AccountNumber        string       `json:"accountNumber" log:"sensitive"`
+	BankName             string       `json:"bankName"`
+	BankAccountType      string       `json:"bankAccountType"`
+	RdfiNumberQualifier  string       `json:"rdfiNumberQualifier"`
+	GatewayRoutingNumber string       `json:"gatewayRoutingNumber" log:"sensitive"`
+	Address              benchAddress `json:"address"`
 }
 
 type benchLoginPayload struct {
@@ -207,7 +207,7 @@ func BenchmarkSanitize_NoTags(b *testing.B) {
 		City: "New York", State: "NY", PostalCode: "10001", Country: "US",
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		Sanitize(payload)
 	}
 }
@@ -229,7 +229,7 @@ func BenchmarkSanitize_KYCPayload(b *testing.B) {
 		},
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		Sanitize(payload)
 	}
 }
@@ -245,7 +245,7 @@ func BenchmarkSanitize_BankingPayload(b *testing.B) {
 		},
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		Sanitize(payload)
 	}
 }
@@ -258,14 +258,14 @@ func BenchmarkSanitize_LoginPayload(b *testing.B) {
 	}
 	payload.Body.Token = "token_MRe0FMIzQLLTiRVp6E6QK0Lsk"
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		Sanitize(payload)
 	}
 }
 
 // BenchmarkSanitize_NonStruct measures passthrough for non-struct types
 func BenchmarkSanitize_NonStruct(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		Sanitize("just a string")
 	}
 }
