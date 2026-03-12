@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/kausys/apikit/openapi/cache"
-	"github.com/kausys/apikit/openapi/generator"
+	"github.com/kausys/apikit/cmd/openapi/cache"
+	"github.com/kausys/apikit/cmd/openapi/generator"
 
 	"github.com/spf13/cobra"
 )

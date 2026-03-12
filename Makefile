@@ -2,7 +2,7 @@
 
 # Root module is "." — sub-modules are in their own directories
 ROOT_MODULE := .
-SUB_MODULES := scanner openapi handler cmd
+SUB_MODULES := cmd
 ALL_MODULES := $(ROOT_MODULE) $(SUB_MODULES)
 
 define run_in_module

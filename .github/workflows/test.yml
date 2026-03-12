@@ -18,9 +18,6 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         module:
           - .
-          - scanner
-          - openapi
-          - handler
           - cmd
 
     steps:
@@ -33,7 +30,7 @@ jobs:
           cache: false
 
       - name: Create go.work
-        run: go work init . scanner openapi handler cmd
+        run: go work init . cmd
 
       - name: Download dependencies
         working-directory: ${{ matrix.module }}

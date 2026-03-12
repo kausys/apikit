@@ -14,9 +14,6 @@ jobs:
       matrix:
         module:
           - .
-          - scanner
-          - openapi
-          - handler
           - cmd
 
     steps:
@@ -27,7 +24,7 @@ jobs:
           go-version: '1.26'
 
       - name: Create go.work
-        run: go work init . scanner openapi handler cmd
+        run: go work init . cmd
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9

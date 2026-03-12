@@ -44,7 +44,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          for mod in scanner handler openapi cmd; do
-            git tag "${mod}/${TAG}"
-            git push origin "${mod}/${TAG}"
-          done
+          git tag "cmd/${TAG}"
+          git push origin "cmd/${TAG}"
