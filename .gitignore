@@ -27,3 +27,6 @@ Thumbs.db
 
 # Customs
 tmp/
+# Go workspace (local development only)
+go.work
+go.work.sum
