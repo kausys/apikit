@@ -1,0 +1,71 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.module }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    env:
+      GOWORK: off
+      SKIP_NETWORK_TESTS: "true"
+    strategy:
+      matrix:
+        go-version: ['1.26']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        module:
+          - .
+          - scanner
+          - openapi
+          - handler
+          - cmd
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-${{ hashFiles(matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module), 'go.work.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-
+
+      - name: Download dependencies
+        working-directory: ${{ matrix.module }}
+        run: go mod download
+
+      - name: Check go mod tidy
+        working-directory: ${{ matrix.module }}
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        shell: bash
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: ${{ matrix.module == '.' && 'coverage.out' || format('{0}/coverage.out', matrix.module) }}
+          flags: ${{ matrix.module == '.' && 'root' || matrix.module }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

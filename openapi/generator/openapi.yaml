@@ -1,0 +1,12 @@
+openapi: 3.1.2
+info:
+    title: API
+    version: 1.0.0
+paths:
+    /admin/users:
+        get:
+            tags:
+                - admin
+            operationId: listAdminUsers
+            responses: {}
+components: {}

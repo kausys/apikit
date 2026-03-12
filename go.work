@@ -1,0 +1,9 @@
+go 1.26
+
+use (
+	.
+	./cmd
+	./handler
+	./openapi
+	./scanner
+)

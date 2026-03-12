@@ -1,0 +1,28 @@
+provider:
+  name: pokemon
+  displayName: Pokemon
+
+spec:
+  path: ./pokemon.openapi.yaml
+
+output:
+  modulePath: api/pkg/sdk/pokemon
+
+config:
+  prefix: pokemon
+  fields:
+    - name: APIUrl
+      key: apiUrl
+      type: string
+      default: '"https://pokeapi.co"'
+    - name: Timeout
+      key: timeout
+      type: duration
+      default: 30*time.Second
+    - name: IsEnabled
+      key: enabled
+      type: bool
+      default: "true"
+
+services:
+  responseWrapper: ""

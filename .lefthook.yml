@@ -1,0 +1,6 @@
+pre-commit:
+  commands:
+    lint:
+      glob: "**/*.go"
+      run: make lint-fix
+      stage_fixed: true

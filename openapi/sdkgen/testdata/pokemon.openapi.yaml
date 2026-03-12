@@ -1,0 +1,328 @@
+openapi: "3.0.4"
+info:
+  title: Pokemon API
+  version: "2.0.0"
+  description: Pokemon API for retrieving Pokemon data
+
+paths:
+  /api/v2/pokemon/{id}:
+    get:
+      operationId: getPokemon
+      summary: Get a Pokemon by ID or name
+      description: |-
+        Retrieves detailed information about a specific Pokemon.
+
+        The following data is included:
+        - Base stats (HP, Attack, Defense, etc.)
+        - Types and abilities
+        - Sprite URLs
+      tags:
+        - pokemon
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Pokemon ID or name
+      responses:
+        "200":
+          description: Pokemon details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pokemon"
+
+  /api/v2/pokemon:
+    get:
+      operationId: listPokemon
+      summary: List all Pokemon with pagination
+      tags:
+        - pokemon
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          description: Number of results to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          description: Offset for pagination
+      responses:
+        "200":
+          description: Paginated list of Pokemon
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PokemonList"
+
+  /api/v2/type/{id}:
+    get:
+      operationId: getType
+      summary: Get a Pokemon type by ID or name
+      tags:
+        - type
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Type ID or name
+      responses:
+        "200":
+          description: Type details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PokemonType"
+
+  /api/v2/ability/{id}:
+    get:
+      operationId: getAbility
+      summary: Get an ability by ID or name
+      tags:
+        - ability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Ability ID or name
+      responses:
+        "200":
+          description: Ability details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ability"
+
+  /api/v2/ability:
+    get:
+      operationId: listAbilities
+      summary: List all abilities
+      tags:
+        - ability
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int32
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: Paginated list of abilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbilityList"
+
+components:
+  schemas:
+    Pokemon:
+      type: object
+      description: represents a Pokemon
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        base_experience:
+          type: integer
+        height:
+          type: integer
+        weight:
+          type: integer
+        is_default:
+          type: boolean
+        order:
+          type: integer
+        types:
+          type: array
+          items:
+            $ref: "#/components/schemas/PokemonTypeSlot"
+        abilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PokemonAbilitySlot"
+        stats:
+          type: array
+          items:
+            $ref: "#/components/schemas/PokemonStat"
+        sprites:
+          $ref: "#/components/schemas/Sprites"
+
+    PokemonList:
+      type: object
+      description: represents a paginated list of Pokemon
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+        previous:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/NamedResource"
+
+    PokemonTypeSlot:
+      type: object
+      description: represents a type slot on a Pokemon
+      properties:
+        slot:
+          type: integer
+        type:
+          $ref: "#/components/schemas/NamedResource"
+
+    PokemonAbilitySlot:
+      type: object
+      description: represents an ability slot on a Pokemon
+      properties:
+        is_hidden:
+          type: boolean
+        slot:
+          type: integer
+        ability:
+          $ref: "#/components/schemas/NamedResource"
+
+    PokemonStat:
+      type: object
+      description: represents a stat value for a Pokemon
+      properties:
+        base_stat:
+          type: integer
+        effort:
+          type: integer
+        stat:
+          $ref: "#/components/schemas/NamedResource"
+
+    Sprites:
+      type: object
+      description: represents Pokemon sprite URLs
+      properties:
+        front_default:
+          type: string
+        front_shiny:
+          type: string
+        back_default:
+          type: string
+        back_shiny:
+          type: string
+
+    PokemonType:
+      type: object
+      description: represents a Pokemon type
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        pokemon:
+          type: array
+          items:
+            $ref: "#/components/schemas/TypePokemonSlot"
+
+    TypePokemonSlot:
+      type: object
+      description: represents a Pokemon within a type
+      properties:
+        slot:
+          type: integer
+        pokemon:
+          $ref: "#/components/schemas/NamedResource"
+
+    Ability:
+      type: object
+      description: represents a Pokemon ability
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        is_main_series:
+          type: boolean
+        effect_entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/EffectEntry"
+
+    AbilityList:
+      type: object
+      description: represents a paginated list of abilities
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+        previous:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/NamedResource"
+
+    EffectEntry:
+      type: object
+      description: represents an effect description
+      properties:
+        effect:
+          type: string
+        short_effect:
+          type: string
+        language:
+          $ref: "#/components/schemas/NamedResource"
+
+    NamedResource:
+      type: object
+      description: represents a named API resource reference
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+
+    ElementType:
+      type: string
+      description: represents a Pokemon element type
+      enum:
+        - normal
+        - fire
+        - water
+        - electric
+        - grass
+        - ice
+        - fighting
+        - poison
+        - ground
+        - flying
+        - psychic
+        - bug
+        - rock
+        - ghost
+        - dragon
+        - dark
+        - steel
+        - fairy
