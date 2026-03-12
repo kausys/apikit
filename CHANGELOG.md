@@ -5,6 +5,13 @@
 
 ### Features
 
+* initial release v0.2.0 ([27d280d](https://github.com/kausys/apikit/commit/27d280d94f8429fea31c889971680f274aa6a083))
+
+## [0.3.0](https://github.com/kausys/apikit/compare/v0.2.0...v0.3.0) (2026-03-12)
+
+
+### Features
+
 * initial release v0.2.0 ([1ff0b33](https://github.com/kausys/apikit/commit/1ff0b338615ded4642dd0bde4967b9a44d50b7ca))
 
 
