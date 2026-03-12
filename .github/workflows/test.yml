@@ -38,7 +38,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-${{ hashFiles(matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module), 'go.work.sum') }}
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-${{ hashFiles(matrix.module == '.' && 'go.sum' || format('{0}/go.sum', matrix.module)) }}
           restore-keys: |
             ${{ runner.os }}-go-${{ matrix.go-version }}-${{ matrix.module }}-
 
@@ -54,7 +54,8 @@ jobs:
 
       - name: Build
         working-directory: ${{ matrix.module }}
-        run: go build ./...
+        shell: bash
+        run: go build -o "${RUNNER_TEMP}/" ./...
 
       - name: Test
         working-directory: ${{ matrix.module }}

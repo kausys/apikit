@@ -5,7 +5,7 @@ project_name: apikit
 builds:
   - id: apikit
     dir: cmd
-    main: .
+    main: ./apikit
     binary: apikit
     env:
       - CGO_ENABLED=0
