@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2](https://github.com/kausys/apikit/compare/v0.3.1...v0.3.2) (2026-03-12)
+
+
+### Bug Fixes
+
+* disable setup-go cache to avoid tar conflicts ([5bb19d7](https://github.com/kausys/apikit/commit/5bb19d7f8b9cf7be68dfb7d88fa1f58de3a136b0))
+* fix CI build for cmd/apikit directory structure ([c155286](https://github.com/kausys/apikit/commit/c15528647c968ebc0aeb272a6f8912aed10da64e))
+* use -o temp dir only for cmd module build ([37e0a37](https://github.com/kausys/apikit/commit/37e0a379ac5e200a5e4f3272fb9b77578863dea1))
+
 ## [0.3.0](https://github.com/kausys/apikit/compare/v0.2.0...v0.3.0) (2026-03-12)
 
 
