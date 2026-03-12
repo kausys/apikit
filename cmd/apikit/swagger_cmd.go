@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/kausys/apikit/openapi/swagger"
+	"github.com/kausys/apikit/cmd/openapi/swagger"
 
 	"github.com/spf13/cobra"
 )

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/kausys/apikit/openapi/sdkgen"
+	"github.com/kausys/apikit/cmd/openapi/sdkgen"
 
 	"github.com/spf13/cobra"
 )

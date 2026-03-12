@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kausys/apikit/handler/checksum"
-	"github.com/kausys/apikit/handler/codegen"
-	"github.com/kausys/apikit/handler/parser"
+	"github.com/kausys/apikit/cmd/handler/checksum"
+	"github.com/kausys/apikit/cmd/handler/codegen"
+	"github.com/kausys/apikit/cmd/handler/parser"
 
 	"github.com/spf13/cobra"
 )
