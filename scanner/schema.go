@@ -8,6 +8,8 @@ import (
 
 // processSchemas processes swagger:model, swagger:parameters, swagger:oneOf, and swagger:anyOf directives.
 func (s *Scanner) processSchemas(filePath string, file *ast.File) error {
+	imports := extractFileImports(file)
+
 	for _, decl := range file.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.TYPE {
@@ -98,7 +100,7 @@ func (s *Scanner) processSchemas(filePath string, file *ast.File) error {
 				if isOneOfModel || isAnyOfModel {
 					processOneOfAnyOfFields(structInfo, t, isOneOfModel)
 				} else {
-					processStructFields(structInfo, t)
+					processStructFields(structInfo, t, imports)
 				}
 			case *ast.ArrayType:
 				structInfo.UnderlyingKind = KindArray
@@ -258,7 +260,7 @@ func extractCompositionSchemas(doc *ast.CommentGroup, directive string) []string
 }
 
 // processStructFields processes all fields in a struct.
-func processStructFields(structInfo *StructInfo, structType *ast.StructType) {
+func processStructFields(structInfo *StructInfo, structType *ast.StructType, imports map[string]string) {
 	if structType.Fields == nil {
 		return
 	}
@@ -279,7 +281,7 @@ func processStructFields(structInfo *StructInfo, structType *ast.StructType) {
 			continue
 		}
 
-		fieldInfo := parseField(field)
+		fieldInfo := parseField(field, imports)
 		if fieldInfo != nil {
 			// Multiply by 1000 to leave room for embedded field sub-indices
 			fieldInfo.Index = index * 1000
@@ -287,6 +289,24 @@ func processStructFields(structInfo *StructInfo, structType *ast.StructType) {
 		}
 		index++
 	}
+}
+
+// extractFileImports extracts import alias → full path mappings from a Go file.
+func extractFileImports(file *ast.File) map[string]string {
+	imports := make(map[string]string)
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		alias := ""
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		} else {
+			// Use last segment of path as default alias
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+		imports[alias] = path
+	}
+	return imports
 }
 
 // extractTypeName extracts the type name from an AST expression.
@@ -305,7 +325,7 @@ func extractTypeName(expr ast.Expr) string {
 }
 
 // parseField parses a single struct field.
-func parseField(field *ast.Field) *FieldInfo {
+func parseField(field *ast.Field, imports map[string]string) *FieldInfo {
 	// Skip fields without names (embedded)
 	if len(field.Names) == 0 {
 		return nil
@@ -328,7 +348,7 @@ func parseField(field *ast.Field) *FieldInfo {
 	}
 
 	// Determine field type
-	determineFieldType(fieldInfo, field.Type)
+	determineFieldType(fieldInfo, field.Type, imports)
 
 	// Parse struct tags
 	if field.Tag != nil {
@@ -362,36 +382,40 @@ func hasFieldIgnoreDirective(field *ast.Field) bool {
 }
 
 // determineFieldType determines the type information for a field.
-func determineFieldType(fieldInfo *FieldInfo, expr ast.Expr) {
+func determineFieldType(fieldInfo *FieldInfo, expr ast.Expr, imports map[string]string) {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		fieldInfo.Type = t.Name
 	case *ast.StarExpr:
 		fieldInfo.IsPointer = true
-		determineFieldType(fieldInfo, t.X)
+		determineFieldType(fieldInfo, t.X, imports)
 	case *ast.ArrayType:
 		fieldInfo.IsArray = true
-		determineFieldType(fieldInfo, t.Elt)
+		determineFieldType(fieldInfo, t.Elt, imports)
 	case *ast.MapType:
 		fieldInfo.IsMap = true
 		if keyIdent, ok := t.Key.(*ast.Ident); ok {
 			fieldInfo.MapKeyType = keyIdent.Name
 		}
-		determineFieldType(fieldInfo, t.Value)
+		determineFieldType(fieldInfo, t.Value, imports)
 	case *ast.SelectorExpr:
 		if x, ok := t.X.(*ast.Ident); ok {
 			fieldInfo.Type = x.Name + "." + t.Sel.Name
+			// Resolve fully-qualified type using import map
+			if importPath, found := imports[x.Name]; found {
+				fieldInfo.QualifiedType = importPath + "." + t.Sel.Name
+			}
 		}
 	case *ast.StructType:
 		// Inline struct type
 		fieldInfo.Type = "object"
 		fieldInfo.IsInlineStruct = true
-		fieldInfo.InlineStruct = processInlineStruct(fieldInfo.Name, t)
+		fieldInfo.InlineStruct = processInlineStruct(fieldInfo.Name, t, imports)
 	}
 }
 
 // processInlineStruct processes an inline struct and returns a StructInfo.
-func processInlineStruct(name string, structType *ast.StructType) *StructInfo {
+func processInlineStruct(name string, structType *ast.StructType, imports map[string]string) *StructInfo {
 	structInfo := &StructInfo{
 		Name:   name,
 		Fields: []*FieldInfo{},
@@ -403,7 +427,7 @@ func processInlineStruct(name string, structType *ast.StructType) *StructInfo {
 			continue
 		}
 
-		fieldInfo := parseField(field)
+		fieldInfo := parseField(field, imports)
 		if fieldInfo != nil {
 			structInfo.Fields = append(structInfo.Fields, fieldInfo)
 		}

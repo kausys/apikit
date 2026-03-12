@@ -138,6 +138,7 @@ type DiscriminatorInfo struct {
 type FieldInfo struct {
 	Name             string
 	Type             string
+	QualifiedType    string // Fully-qualified type with import path (e.g., "github.com/shopspring/decimal.Decimal")
 	Description      string
 	Default          string
 	Example          string
