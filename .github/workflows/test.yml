@@ -11,7 +11,6 @@ jobs:
     name: Test (${{ matrix.module }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
-      GOWORK: off
       SKIP_NETWORK_TESTS: "true"
     strategy:
       matrix:
@@ -33,12 +32,17 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: false
 
+      - name: Create go.work
+        run: go work init . scanner openapi handler cmd
+
       - name: Download dependencies
         working-directory: ${{ matrix.module }}
         run: go mod download
 
       - name: Check go mod tidy
         working-directory: ${{ matrix.module }}
+        env:
+          GOWORK: off
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum

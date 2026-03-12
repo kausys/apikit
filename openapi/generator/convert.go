@@ -247,9 +247,20 @@ func isKnownGoType(t string) bool {
 }
 
 // setSchemaType sets the type and format for a schema based on Go type.
-func (g *Generator) setSchemaType(schema *spec.Schema, goType string) {
-	// Check for registered custom types first
-	if typeInfo := GetCustomType(goType); typeInfo != nil {
+// qualifiedType is optional — if provided, it takes precedence for custom type lookup.
+func (g *Generator) setSchemaType(schema *spec.Schema, goType string, qualifiedType ...string) {
+	// Check for registered custom types first (try qualified name, then short name)
+	var typeInfo *TypeInfo
+	for _, qt := range qualifiedType {
+		if qt != "" {
+			typeInfo = GetCustomType(qt)
+			break
+		}
+	}
+	if typeInfo == nil {
+		typeInfo = GetCustomType(goType)
+	}
+	if typeInfo != nil {
 		schema.Type = spec.NewSchemaType(typeInfo.Type)
 		schema.Format = typeInfo.Format
 		if typeInfo.Example != nil && len(schema.Examples) == 0 {

@@ -3,7 +3,7 @@ module github.com/kausys/apikit/openapi
 go 1.26
 
 require (
-	github.com/kausys/apikit/scanner v0.3.0
+	github.com/kausys/apikit/scanner v0.3.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/tools v0.40.0
 	gopkg.in/yaml.v3 v3.0.1

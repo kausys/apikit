@@ -2,6 +2,7 @@ package generator
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -38,11 +39,16 @@ var (
 //	    info.Format = "uuid"
 //	})
 func FieldType(t any, handler TypeHandler) {
-	typeName := getTypeName(t)
-	RegisterType(typeName, handler)
+	fullName := getTypeName(t)
+	shortName := shortPkgTypeName(t)
+	RegisterType(fullName, handler)
+	// Also register under short name for backward compatibility
+	if shortName != fullName {
+		RegisterType(shortName, handler)
+	}
 }
 
-// getTypeName returns the package-qualified type name (e.g., "decimal.Decimal").
+// getTypeName returns the fully-qualified type name (e.g., "github.com/shopspring/decimal.Decimal").
 func getTypeName(t any) string {
 	rt := reflect.TypeOf(t)
 	if rt.Kind() == reflect.Pointer {
@@ -54,8 +60,22 @@ func getTypeName(t any) string {
 		return rt.Name()
 	}
 
-	// Extract package name from path (e.g., "github.com/shopspring/decimal" -> "decimal")
-	pkgName := rt.PkgPath()
+	return pkgPath + "." + rt.Name()
+}
+
+// shortPkgTypeName returns the short package-qualified type name (e.g., "decimal.Decimal").
+func shortPkgTypeName(t any) string {
+	rt := reflect.TypeOf(t)
+	if rt.Kind() == reflect.Pointer {
+		rt = rt.Elem()
+	}
+
+	pkgPath := rt.PkgPath()
+	if pkgPath == "" {
+		return rt.Name()
+	}
+
+	pkgName := pkgPath
 	for i := len(pkgName) - 1; i >= 0; i-- {
 		if pkgName[i] == '/' {
 			pkgName = pkgName[i+1:]
@@ -91,12 +111,24 @@ func RegisterTypeInfo(typeName string, info *TypeInfo) {
 }
 
 // GetCustomType returns the TypeInfo for a registered custom type.
+// It tries an exact match first, then falls back to the short name
+// (e.g., "decimal.Decimal" for "github.com/shopspring/decimal.Decimal").
 // Returns nil if the type is not registered.
 func GetCustomType(typeName string) *TypeInfo {
 	customTypesMu.RLock()
 	defer customTypesMu.RUnlock()
 
-	return customTypes[typeName]
+	if info := customTypes[typeName]; info != nil {
+		return info
+	}
+
+	// Fallback: extract short name from fully-qualified type
+	if idx := strings.LastIndex(typeName, "/"); idx >= 0 {
+		shortName := typeName[idx+1:]
+		return customTypes[shortName]
+	}
+
+	return nil
 }
 
 // ClearCustomTypes removes all registered custom types.
@@ -117,17 +149,21 @@ func ResetToDefaults() {
 
 // registerDefaults registers the default custom types.
 func registerDefaults() {
-	// uuid.UUID
-	RegisterType("uuid.UUID", func(info *TypeInfo) {
+	// uuid.UUID (github.com/google/uuid)
+	uuidHandler := func(info *TypeInfo) {
 		info.Type = "string"
 		info.Format = "uuid"
-	})
+	}
+	RegisterType("uuid.UUID", uuidHandler)
+	RegisterType("github.com/google/uuid.UUID", uuidHandler)
 
 	// time.Time
-	RegisterType("time.Time", func(info *TypeInfo) {
+	timeHandler := func(info *TypeInfo) {
 		info.Type = "string"
 		info.Format = "date-time"
-	})
+	}
+	RegisterType("time.Time", timeHandler)
+	RegisterType("time.Time", timeHandler) // time is a stdlib package, no full path needed
 }
 
 //nolint:gochecknoinits // registers default type mappings at package init

@@ -3,28 +3,321 @@
 [![Tests](https://github.com/kausys/apikit/actions/workflows/test.yml/badge.svg)](https://github.com/kausys/apikit/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kausys/apikit)](https://goreportcard.com/report/github.com/kausys/apikit)
 
-Go toolkit for HTTP handler generation, OpenAPI 3.1 specification generation, and Go SDK generation.
+Go toolkit for building APIs: HTTP handler generation, OpenAPI 3.1 spec generation, Go SDK generation, and runtime utilities.
 
-## Tools
+## Modules
 
-- **`handler gen`** — Generate HTTP handler wrappers from annotated Go functions
-- **`openapi gen`** — Generate OpenAPI 3.1 specs from Go source code (swagger directives)
-- **`sdk gen`** — Generate typed Go SDK packages from OpenAPI specs
-- **`swagger`** — Download and package Swagger UI assets
+| Module | Import Path | Description |
+|--------|-------------|-------------|
+| **root** | `github.com/kausys/apikit` | Runtime: HTTP responses, errors, validation, logging, sanitization |
+| **scanner** | `github.com/kausys/apikit/scanner` | Go AST scanner for swagger directives |
+| **openapi** | `github.com/kausys/apikit/openapi` | OpenAPI 3.1 spec generation from scanned directives |
+| **handler** | `github.com/kausys/apikit/handler` | HTTP handler code generation from annotated functions |
+| **cmd** | `github.com/kausys/apikit/cmd` | CLI binary (`apikit`) |
 
 ## Installation
 
 ```bash
+# CLI tool
 go install github.com/kausys/apikit/cmd/apikit@latest
+
+# Runtime library (used by generated code)
+go get github.com/kausys/apikit@latest
 ```
 
 ---
 
-## 1. handler gen — HTTP Handler Generation
+## Root Module — Runtime
 
-Generates request parsing, validation, and response handling boilerplate from annotated Go functions.
+`github.com/kausys/apikit`
 
-### Quick Start
+The root module provides the runtime types and utilities that generated handler code depends on.
+
+### HTTP Responses
+
+```go
+import "github.com/kausys/apikit"
+
+// Return structured responses from handlers
+response := apikit.NewHttpResponse(http.StatusOK, data)
+response.WithHeader("X-Request-ID", reqID)
+response.WithContentType("application/json")
+
+// Write JSON directly
+apikit.WriteJSON(w, data)
+
+// Handle response/error from a handler call
+apikit.HandleResponse(w, response, err)
+```
+
+### Errors
+
+```go
+// Predefined error constructors
+apikit.BadRequest("invalid email format")
+apikit.NotFound("user not found")
+apikit.Unauthorized("invalid token")
+apikit.Forbidden("insufficient permissions")
+apikit.Conflict("email already exists")
+apikit.UnprocessableEntity("validation failed")
+apikit.InternalError("database connection failed")
+apikit.TooManyRequests("rate limit exceeded")
+apikit.ServiceUnavailable("service down")
+
+// With details and chaining
+apikit.BadRequest("validation failed").
+    WithDetails(fieldErrors).
+    WithRequestID(reqID).
+    WithCause(err)
+```
+
+### Validation
+
+```go
+import "github.com/kausys/apikit/validator"
+
+// Validate structs
+err := validator.StructCtx(ctx, &payload)
+
+// Register custom validations
+validator.RegisterValidation(func(v *validator.Validate) {
+    v.RegisterValidation("custom_rule", customFunc)
+})
+
+// Implement ValidEnum for enum types
+type Status string
+func (s Status) IsValid() bool { return s == "active" || s == "inactive" }
+```
+
+### Logging
+
+```go
+import "github.com/kausys/apikit"
+
+// Set a global logger (slog-style key-value pattern)
+apikit.SetLogger(myLogger)
+
+// Check if a logger is configured
+if apikit.LoggerEnabled() {
+    // ...
+}
+```
+
+### Sanitization
+
+Sanitize structs for safe logging using struct tags:
+
+```go
+type CreateUserRequest struct {
+    Email    string `json:"email"`
+    Password string `json:"password" log:"sensitive"` // → "[REDACTED]"
+    Internal string `json:"-"        log:"-"`          // → omitted
+}
+
+// In log calls
+logger.Info("request", "payload", apikit.Sanitize(payload))
+// Output: {"email": "user@example.com", "password": "[REDACTED]"}
+```
+
+| Tag | Behavior |
+|-----|----------|
+| `log:"-"` | Field omitted from output |
+| `log:"sensitive"` | Value replaced with `[REDACTED]` |
+| *(none)* | Value passed through |
+
+Supports nested structs, pointers, slices, and embedded structs. Uses `json` tag names as map keys.
+
+### Swagger UI Handler
+
+```go
+import "github.com/kausys/apikit/swagger"
+
+//go:embed swagger-ui.zip
+var swaggerUIZip []byte
+
+handler, err := swagger.New(swaggerUIZip, swagger.Config{
+    BasePath:      "/swagger",
+    SpecPath:      "/openapi/specs",
+    ResourcesPath: "/openapi/resources",
+    Specs: map[string][]byte{
+        "Public API":   publicSpec,
+        "Internal API": internalSpec,
+    },
+    DefaultSpec: "Public API",
+})
+
+// Option 1: Use with http.ServeMux
+handler.Routes(mux)
+
+// Option 2: Use with chi or similar routers
+r.Mount("/swagger", http.StripPrefix("/swagger", http.HandlerFunc(handler.ServeUI)))
+r.Get("/openapi/specs", handler.ServeSpec)
+r.Get("/openapi/resources", handler.ServeResources)
+```
+
+### Time Parsing
+
+```go
+t, err := apikit.NewTimeFromString("2024-01-15T10:30:00Z")
+// Supports: RFC3339, RFC3339Nano, 2006-01-02, 01/02/2006, etc.
+```
+
+---
+
+## Scanner Module
+
+`github.com/kausys/apikit/scanner`
+
+Parses Go source files to extract swagger directives into structured data.
+
+```go
+import "github.com/kausys/apikit/scanner"
+
+s := scanner.New(
+    scanner.WithDir("."),
+    scanner.WithPattern("./..."),
+    scanner.WithIgnorePaths("vendor", "testdata"),
+)
+
+if err := s.Scan(); err != nil {
+    log.Fatal(err)
+}
+
+// Access results
+s.Meta       // *MetaInfo — API metadata
+s.Structs    // map[string]*StructInfo — models and parameters
+s.Routes     // map[string]*RouteInfo — API endpoints
+s.Enums      // map[string]*EnumInfo — enum definitions
+```
+
+### Swagger Directives
+
+```go
+// swagger:meta
+// Title: My API
+// Version: 1.0.0
+// Description: API description
+// BasePath: /api/v1
+// SecuritySchemes:
+//   BearerAuth:
+//     type: http
+//     scheme: bearer
+
+// swagger:model
+type User struct {
+    ID    string `json:"id"`
+    Email string `json:"email" example:"user@example.com"`
+}
+
+// swagger:enum
+type Status string
+const (
+    StatusActive   Status = "active"
+    StatusInactive Status = "inactive"
+)
+
+// swagger:parameters
+type GetUserParams struct {
+    // in: path
+    UserID string `json:"user_id" validate:"required,uuid"`
+}
+
+// swagger:route GET /users/{user_id} users GetUser
+// summary: Get a user by ID
+// Responses:
+//   200: User
+//   404: ErrorResponse
+// Security:
+//   BearerAuth
+```
+
+### Multi-Spec Support
+
+Assign elements to specific specs using the `spec:` directive:
+
+```go
+// swagger:route GET /public/health public Health
+// spec: public
+// summary: Health check
+
+// swagger:route GET /internal/metrics internal Metrics
+// spec: internal
+// summary: Internal metrics
+```
+
+---
+
+## OpenAPI Module
+
+`github.com/kausys/apikit/openapi`
+
+Generates OpenAPI 3.1 specifications from scanner output.
+
+```go
+import "github.com/kausys/apikit/openapi"
+
+doc, err := openapi.Generate(
+    openapi.WithDir("."),
+    openapi.WithPattern("./api/..."),
+    openapi.WithOutput("openapi.yaml", "yaml"),
+    openapi.WithCache(true),
+    openapi.WithFlatten(false),
+    openapi.WithValidation(true),
+    openapi.WithCleanUnused(true),
+    openapi.WithEnumRefs(true),
+)
+```
+
+### Custom Type Mapping
+
+Create `.openapi.yaml` in your project root to map Go types to OpenAPI types:
+
+```yaml
+custom_types:
+  # Short name (backward compatible)
+  decimal.Decimal:
+    type: string
+    format: decimal
+    example: "123.45"
+
+  # Fully-qualified path (avoids collisions)
+  github.com/shopspring/decimal.Decimal:
+    type: string
+    format: decimal
+    example: "123.45"
+```
+
+Or register programmatically:
+
+```go
+import "github.com/kausys/apikit/openapi/generator"
+
+generator.FieldType(decimal.Decimal{}, func(info *generator.TypeInfo) {
+    info.Type = "string"
+    info.Format = "decimal"
+    info.Example = "123.45"
+})
+```
+
+### Subpackages
+
+| Package | Purpose |
+|---------|---------|
+| `openapi/spec` | OpenAPI 3.1 type definitions (Schema, Paths, Components, etc.) |
+| `openapi/generator` | Spec generation engine, custom type registry |
+| `openapi/cache` | Incremental caching for large codebases |
+| `openapi/sdkgen` | Go SDK generation from OpenAPI specs |
+| `openapi/swagger` | Swagger UI asset management |
+
+---
+
+## Handler Module
+
+`github.com/kausys/apikit/handler`
+
+Generates HTTP handler wrappers with request parsing, validation, and response handling.
+
+### Usage
 
 ```go
 //go:generate apikit handler gen
@@ -35,8 +328,8 @@ type GetUserRequest struct {
 }
 
 type GetUserResponse struct {
-    ID    string `json:"id"`
-    Name  string `json:"name"`
+    ID   string `json:"id"`
+    Name string `json:"name"`
 }
 
 // apikit:handler
@@ -48,6 +341,8 @@ func GetUser(ctx context.Context, req GetUserRequest) (GetUserResponse, error) {
 ```bash
 go generate ./...
 ```
+
+### Routing
 
 ```go
 // Standard http
@@ -70,21 +365,9 @@ e.GET("/users/:id", getUserAPIKit(GetUser))
 | `path:"name"` | URL path parameter |
 | `query:"name"` | Query string |
 | `header:"name"` | HTTP header |
-| `cookie:"name"` | Cookie |
+| `cookie:"name"` | Cookie value |
 | `form:"name"` | Form field / multipart |
-| `json:"name"` | JSON body |
-
-### Validation
-
-Uses [go-playground/validator](https://github.com/go-playground/validator):
-
-```go
-type CreateUserRequest struct {
-    Email    string `json:"email" validate:"required,email"`
-    Password string `json:"password" validate:"required,min=8"`
-    Age      int    `json:"age" validate:"gte=18,lte=120"`
-}
-```
+| `json:"name"` | JSON body (auto-detected) |
 
 ### File Uploads
 
@@ -105,220 +388,96 @@ type StreamRequest struct {
 }
 ```
 
-### CLI Reference
+### Subpackages
+
+| Package | Purpose |
+|---------|---------|
+| `handler/parser` | Parses Go files for `apikit:handler` annotations |
+| `handler/codegen` | Generates handler wrapper code from templates |
+| `handler/extractors` | Framework-specific parameter extraction (http, fiber, gin, echo) |
+| `handler/types` | Custom type extractor registry for parameter parsing |
+
+---
+
+## CLI Reference
+
+### handler gen
 
 ```
 apikit handler gen [flags]
 
 Flags:
-  -f, --file string        Source file to process (defaults to $GOFILE)
+  -f, --file string        Source file (defaults to $GOFILE)
   -o, --output string      Output file (defaults to <source>_apikit.go)
-      --framework string   Target framework: http, fiber, gin, echo (default "http")
-      --force              Force regeneration even if source is unchanged
-      --dry-run            Print output without writing
+      --framework string   http, fiber, gin, echo (default "http")
+      --force              Regenerate even if unchanged
+      --dry-run            Print without writing
   -v, --verbose            Verbose output
 ```
 
----
-
-## 2. openapi gen — OpenAPI 3.1 Specification Generation
-
-Scans Go source code for swagger directives and generates a complete OpenAPI 3.1 spec.
-
-### Supported Directives
-
-| Directive | Purpose |
-|-----------|---------|
-| `swagger:meta` | API metadata (title, version, description) |
-| `swagger:model` | Schema definitions |
-| `swagger:route` | Operation definitions |
-| `swagger:parameters` | Parameter definitions |
-| `swagger:enum` | Enum definitions |
-
-### Examples
-
-```bash
-# Generate to openapi.yaml (default)
-apikit openapi gen
-
-# Custom output and format
-apikit openapi gen -o api.json -f json
-
-# Scan a specific package pattern
-apikit openapi gen -p ./api/... -o api.yaml
-
-# Generate multiple specs from spec: directives
-apikit openapi gen --multi-specs
-
-# Generate a single named spec
-apikit openapi gen --spec public
-
-# Inline $ref schemas
-apikit openapi gen --flatten
-
-# Validate the generated spec
-apikit openapi gen --validate
-
-# Clean cache and regenerate
-apikit openapi clean && apikit openapi gen
-```
-
-### CLI Reference
+### openapi gen
 
 ```
 apikit openapi gen [flags]
 
 Flags:
-  -o, --output string       Output file path (default "openapi.yaml")
-  -f, --format string       Output format: yaml or json (default "yaml")
-  -p, --pattern string      Package pattern to scan (default "./...")
-  -d, --dir string          Root directory to scan from (default ".")
-      --no-cache            Disable incremental caching
-      --flatten             Inline $ref schemas instead of using references
-      --validate            Validate the generated spec
-      --ignore strings      Path patterns to ignore
+  -o, --output string       Output file (default "openapi.yaml")
+  -f, --format string       yaml or json (default "yaml")
+  -p, --pattern string      Package pattern (default "./...")
+  -d, --dir string          Root directory (default ".")
+      --no-cache            Disable caching
+      --flatten             Inline $ref schemas
+      --validate            Validate output
+      --ignore strings      Paths to ignore
       --clean-unused        Remove unreferenced schemas
-      --multi-specs         Generate multiple specs based on spec: directives
-      --spec string         Generate only a specific spec by name
-      --no-default          Skip generating the default spec for untagged routes
-      --enum-refs           Generate enums as $ref instead of inline
+      --multi-specs         Generate multiple specs
+      --spec string         Generate specific spec only
+      --no-default          Skip default spec
+      --enum-refs           Enums as $ref
 
-apikit openapi clean        Remove the .openapi cache directory
-apikit openapi status       Show cache statistics
+apikit openapi clean        Remove cache
+apikit openapi status       Show cache stats
 ```
 
----
-
-## 3. sdk gen — Go SDK Generation
-
-Generates a complete, typed Go SDK package from an OpenAPI specification and a `.sdkgen.yaml` config.
-
-### Generated Structure
+### sdk gen
 
 ```
-pkg/sdk/pokemon/
-├── client/    # HTTP client with middleware chain
-├── config/    # Configuration (gookit/config)
-├── models/    # Request/response structs and enums
-└── services/  # Service methods per API tag
-```
-
-### Examples
-
-```bash
-# Generate SDK to ./pkg/sdk/pokemon
-apikit sdk gen pokemon.sdkgen.yaml -o ./pkg/sdk/pokemon
-
-# Override provider name
-apikit sdk gen pokemon.sdkgen.yaml -o ./pkg/sdk/pokemon --provider myProvider
-```
-
-### CLI Reference
-
-```
-apikit sdk gen <config.sdkgen.yaml> [flags]
-
-Args:
-  config.sdkgen.yaml   Path to SDK config file (required)
+apikit sdk gen <config.sdkgen.yaml> -o <output-dir> [flags]
 
 Flags:
-  -o, --output string     Output directory for generated SDK (required)
-      --provider string   Override provider name from config
+  -o, --output string     Output directory (required)
+      --provider string   Override provider name
 ```
 
----
-
-## 4. swagger — Swagger UI Management
-
-Downloads and packages Swagger UI assets for embedding in Go applications.
-
-### Examples
-
-```bash
-# Download latest Swagger UI
-apikit swagger download -o ./pkg/openapi
-
-# Download specific version
-apikit swagger download -v 5.29.4 -o ./pkg/openapi
-
-# Download without default customizations
-apikit swagger download --with-defaults=false -o ./pkg/openapi
-
-# Single-spec mode initializer
-apikit swagger download --simple -o ./pkg/openapi
-
-# Check latest available version
-apikit swagger version
-```
-
-### Using the Downloaded Assets
-
-```go
-//go:embed swagger-ui.zip
-var swaggerUIData []byte
-
-handler, err := swagger.New(swaggerUIData, swagger.Config{
-    Specs: map[string][]byte{"api": specData},
-})
-```
-
-### CLI Reference
+### swagger
 
 ```
 apikit swagger download [flags]
 
 Flags:
-  -o, --output string    Output directory for swagger-ui.zip (default ".")
-  -v, --version string   Specific version to download (default: latest)
-      --with-defaults    Include default initializer and CSS (default true)
-      --simple           Use simple initializer for single-spec mode
+  -o, --output string    Output directory (default ".")
+  -v, --version string   Version (default: latest)
+      --with-defaults    Include default initializer (default true)
+      --simple           Single-spec mode
 
-apikit swagger version   Show the latest available Swagger UI version
+apikit swagger version   Show latest version
 ```
 
 ---
 
-## Workspace Architecture
-
-The repository is a Go workspace (`go.work`) with 5 independent modules:
-
-| Module | Import Path | Purpose |
-|--------|-------------|---------|
-| `runtime/` | `github.com/kausys/apikit/runtime` | HTTP utilities, error types, validation |
-| `scanner/` | `github.com/kausys/apikit/scanner` | Go AST scanner for swagger directives |
-| `openapi/` | `github.com/kausys/apikit/openapi` | OpenAPI spec types, generator, SDK gen, swagger |
-| `handler/` | `github.com/kausys/apikit/handler` | Handler parser and code generator |
-| `cmd/` | `github.com/kausys/apikit/cmd` | CLI (`apikit` binary) |
-
 ## Development
 
 ```bash
-# Build all modules
-make build
-
-# Run all tests
-make test
-
-# Run tests with coverage
-make test-coverage
-
-# Lint all modules
-make lint
-
-# Format all modules
-make fmt
-
-# Tidy all modules
-make tidy
-
-# Full CI check (fmt + lint + tidy check + test)
-make ci
-
-# Install apikit locally
-make install
-
-# Install dev tools
-make setup
+make setup          # Install golangci-lint v2 + lefthook
+make build          # Build all modules
+make test           # Run all tests
+make test-coverage  # Tests with coverage
+make lint           # Lint all modules
+make lint-fix       # Auto-fix lint issues
+make fmt            # Format all modules
+make tidy           # go mod tidy all modules
+make ci             # Full CI check (fmt + lint + tidy + test)
+make install        # Install apikit binary locally
 ```
 
 ## License

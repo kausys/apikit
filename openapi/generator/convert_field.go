@@ -64,7 +64,7 @@ func (g *Generator) fieldToSchema(f *scanner.FieldInfo) *spec.Schema {
 		Description: f.Description,
 	}
 
-	g.setSchemaType(schema, f.Type)
+	g.setSchemaType(schema, f.Type, f.QualifiedType)
 
 	if f.Nullable {
 		schema.Type = schema.Type.WithNull()
@@ -119,7 +119,7 @@ func (g *Generator) fieldToParameter(f *scanner.FieldInfo, path string) *spec.Pa
 		}
 	} else {
 		schema = &spec.Schema{}
-		g.setSchemaType(schema, f.Type)
+		g.setSchemaType(schema, f.Type, f.QualifiedType)
 		g.applyValidations(schema, f)
 
 		if f.Example != "" {

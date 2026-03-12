@@ -3,7 +3,7 @@ module github.com/kausys/apikit/handler
 go 1.26
 
 require (
-	github.com/kausys/apikit/scanner v0.3.0
+	github.com/kausys/apikit/scanner v0.3.2
 	golang.org/x/tools v0.40.0
 )
 

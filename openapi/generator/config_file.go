@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/kausys/apikit/openapi/spec"
@@ -95,12 +96,23 @@ func LoadConfigFile(dir string) error {
 
 	// Register custom types
 	for typeName, typeConfig := range config.CustomTypes {
-		RegisterTypeInfo(typeName, &TypeInfo{
+		info := &TypeInfo{
 			Type:    typeConfig.Type,
 			Format:  typeConfig.Format,
 			Example: typeConfig.Example,
 			Default: typeConfig.Default,
-		})
+		}
+		RegisterTypeInfo(typeName, info)
+
+		// If fully-qualified path (e.g., "github.com/shopspring/decimal.Decimal"),
+		// also register under the short name ("decimal.Decimal") as fallback.
+		if strings.Contains(typeName, "/") {
+			parts := strings.Split(typeName, "/")
+			shortName := parts[len(parts)-1]
+			if GetCustomType(shortName) == nil {
+				RegisterTypeInfo(shortName, info)
+			}
+		}
 	}
 
 	// Register external schemas
