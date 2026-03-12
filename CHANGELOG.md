@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/kausys/apikit/compare/v0.3.0...v0.3.1) (2026-03-12)
+
+
+### Bug Fixes
+
+* exclude go.work from module distribution ([c6be6ea](https://github.com/kausys/apikit/commit/c6be6eacda30165a99d1bd8e4535844c4a8a2e18))
+
 ## [0.3.0](https://github.com/kausys/apikit/compare/v0.2.0...v0.3.0) (2026-03-12)
 
 
