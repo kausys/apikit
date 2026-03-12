@@ -41,7 +41,7 @@ func {{ .WrapperName }}(handler func(context.Context, {{ .ParamType }}{{ if .Has
 
 		// Parse request parameters
 		if err := {{ .ParseFuncName }}(w, r, &payload); err != nil {
-			apikit.GetLogger().Error(r.Context(), "failed to parse request", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", payload, "error", err)
+			apikit.GetLogger().Error(r.Context(), "failed to parse request", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", apikit.Sanitize(payload), "error", err)
 			apikit.HandleError(w, apikit.BadRequest("failed to parse request").WithCause(err))
 			return
 		}
@@ -49,11 +49,10 @@ func {{ .WrapperName }}(handler func(context.Context, {{ .ParamType }}{{ if .Has
 		{{- if .HasValidation }}
 		// Validate request payload
 		if err := validator.StructCtx(r.Context(), &payload); err != nil {
+			apikit.GetLogger().Error(r.Context(), "validation failed", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", apikit.Sanitize(payload), "error", err)
 			if valErr, ok := err.(validator.ValidationError); ok {
-				apikit.GetLogger().Error(r.Context(), "validation failed", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", payload, "error", valErr.Message)
 				apikit.HandleError(w, apikit.UnprocessableEntity(valErr.Message).WithDetails(valErr.FieldErrors))
 			} else {
-				apikit.GetLogger().Error(r.Context(), "validation failed", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", payload, "error", err)
 				apikit.HandleError(w, apikit.UnprocessableEntity("validation failed").WithCause(err))
 			}
 			return
@@ -65,7 +64,7 @@ func {{ .WrapperName }}(handler func(context.Context, {{ .ParamType }}{{ if .Has
 
 		// Handle response
 		if err != nil {
-			apikit.GetLogger().Error(r.Context(), "handler error", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", payload, "error", err)
+			apikit.GetLogger().Error(r.Context(), "handler error", "handler", "{{ .Name }}", "method", r.Method, "path", r.URL.Path, "payload", apikit.Sanitize(payload), "error", err)
 		}
 		apikit.HandleResponse(w, response, err)
 {{- if eq $.Framework "gin" }}

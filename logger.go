@@ -25,3 +25,9 @@ func SetLogger(l Logger) {
 func GetLogger() Logger {
 	return globalLogger
 }
+
+// LoggerEnabled returns true if a real (non-noop) logger has been set.
+func LoggerEnabled() bool {
+	_, noop := globalLogger.(noopLogger)
+	return !noop
+}
