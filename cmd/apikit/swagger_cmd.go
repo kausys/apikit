@@ -39,7 +39,7 @@ Examples:
   apikit swagger download -o ./pkg/openapi
 
   # Download specific version
-  apikit swagger download -v 5.29.4 -o ./pkg/openapi
+  apikit swagger download --version 5.29.4 -o ./pkg/openapi
 
   # Download without customizations
   apikit swagger download --with-defaults=false -o ./pkg/openapi
@@ -59,7 +59,7 @@ var swaggerVersionCmd = &cobra.Command{
 //nolint:gochecknoinits // cobra command registration requires init
 func init() {
 	swaggerDownloadCmd.Flags().StringVarP(&swaggerOutputDir, "output", "o", ".", "Output directory for swagger-ui.zip")
-	swaggerDownloadCmd.Flags().StringVarP(&swaggerVersion, "version", "v", "", "Specific version to download (default: latest)")
+	swaggerDownloadCmd.Flags().StringVar(&swaggerVersion, "version", "", "Specific version to download (default: latest)")
 	swaggerDownloadCmd.Flags().BoolVar(&swaggerUseDefaults, "with-defaults", true, "Include default initializer and CSS customizations")
 	swaggerDownloadCmd.Flags().BoolVar(&swaggerSimple, "simple", false, "Use simple initializer for single-spec mode")
 
