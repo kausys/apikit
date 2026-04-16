@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/kausys/apikit/compare/v0.5.0...v0.5.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **swagger:** remove -v shorthand collision with root --verbose flag ([#11](https://github.com/kausys/apikit/issues/11)) ([fa92b46](https://github.com/kausys/apikit/commit/fa92b466142d0a85d4ace13c7713db0613d30078))
+
 ## [0.5.0](https://github.com/kausys/apikit/compare/v0.4.0...v0.5.0) (2026-03-15)
 
 
