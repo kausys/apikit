@@ -58,22 +58,42 @@ func GenerateExtractionCode(varName, fieldName, typeName string, field *parser.F
 	}`, varName, parsingCode), imports
 }
 
+// IntBitSize returns the strconv bitSize argument that matches a Go integer
+// type. Using the matching bitSize makes strconv.ParseInt/ParseUint range-check
+// the value so the subsequent cast to the target type cannot overflow on any
+// platform. For platform-sized "int"/"uint" we return "0", which strconv
+// interprets as the size of int/uint on the current platform.
+func IntBitSize(typeName string) string {
+	switch typeName {
+	case "int8", "uint8":
+		return "8"
+	case "int16", "uint16":
+		return "16"
+	case "int32", "uint32":
+		return "32"
+	case "int64", "uint64":
+		return "64"
+	default: // "int", "uint"
+		return "0"
+	}
+}
+
 // GenerateIntParsing generates code to parse an integer from a string
 func GenerateIntParsing(varName, fieldName, typeName string) string {
-	return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, 64); err == nil {
+	return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, %s); err == nil {
 		payload.%s = %s(i)
 	} else {
 		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, fieldName, typeName, fieldName)
+	}`, varName, IntBitSize(typeName), fieldName, typeName, fieldName)
 }
 
 // GenerateUintParsing generates code to parse an unsigned integer from a string
 func GenerateUintParsing(varName, fieldName, typeName string) string {
-	return fmt.Sprintf(`if i, err := strconv.ParseUint(%s, 10, 64); err == nil {
+	return fmt.Sprintf(`if i, err := strconv.ParseUint(%s, 10, %s); err == nil {
 		payload.%s = %s(i)
 	} else {
 		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, fieldName, typeName, fieldName)
+	}`, varName, IntBitSize(typeName), fieldName, typeName, fieldName)
 }
 
 // GenerateFloatParsing generates code to parse a float from a string
@@ -235,13 +255,13 @@ func GenerateSliceCodeByType(varName, fieldName, elementType string, field *pars
 		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
 		payload.%s = make([]%s, 0, len(vals))
 		for i, val := range vals {
-			if parsed, err := strconv.ParseInt(val, 10, 64); err == nil {
+			if parsed, err := strconv.ParseInt(val, 10, %s); err == nil {
 				payload.%s = append(payload.%s, %s(parsed))
 			} else {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
 			}
 		}
-	}`, varName, fieldName, elementType, fieldName, fieldName, elementType, fieldName)
+	}`, varName, fieldName, elementType, IntBitSize(elementType), fieldName, fieldName, elementType, fieldName)
 
 	case IsUintType(elementType):
 		// For []uint, []uint64, etc. - parse each element
@@ -249,13 +269,13 @@ func GenerateSliceCodeByType(varName, fieldName, elementType string, field *pars
 		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
 		payload.%s = make([]%s, 0, len(vals))
 		for i, val := range vals {
-			if parsed, err := strconv.ParseUint(val, 10, 64); err == nil {
+			if parsed, err := strconv.ParseUint(val, 10, %s); err == nil {
 				payload.%s = append(payload.%s, %s(parsed))
 			} else {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
 			}
 		}
-	}`, varName, fieldName, elementType, fieldName, fieldName, elementType, fieldName)
+	}`, varName, fieldName, elementType, IntBitSize(elementType), fieldName, fieldName, elementType, fieldName)
 
 	case IsFloatType(elementType):
 		// For []float32, []float64 - parse each element

@@ -160,45 +160,65 @@ func (r *Registry) registerBuiltins() {
 	})
 }
 
+// intBitSize returns the strconv bitSize argument that matches a Go integer
+// type, so strconv.ParseInt/ParseUint range-checks the value before the
+// generated code casts it. "0" maps to the platform-sized int/uint.
+func intBitSize(typeName string) string {
+	switch typeName {
+	case "int8", "uint8":
+		return "8"
+	case "int16", "uint16":
+		return "16"
+	case "int32", "uint32":
+		return "32"
+	case "int64", "uint64":
+		return "64"
+	default: // "int", "uint"
+		return "0"
+	}
+}
+
 func (r *Registry) registerIntType(typeName string) {
+	bitSize := intBitSize(typeName)
 	r.Register(&Extractor{
 		TypeName: typeName,
 		ParseFunc: func(varName, fieldName string, isPointer bool) string {
 			if isPointer {
-				return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, 64); err == nil {
+				return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, %s); err == nil {
 	val := %s(i)
 	payload.%s = &val
 } else {
 	return fmt.Errorf("invalid %s: %%w", err)
-}`, varName, typeName, fieldName, fieldName)
+}`, varName, bitSize, typeName, fieldName, fieldName)
 			}
-			return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, 64); err == nil {
+			return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, %s); err == nil {
 	payload.%s = %s(i)
 } else {
 	return fmt.Errorf("invalid %s: %%w", err)
-}`, varName, fieldName, typeName, fieldName)
+}`, varName, bitSize, fieldName, typeName, fieldName)
 		},
 		RequiresError: true,
 	})
 }
 
 func (r *Registry) registerUintType(typeName string) {
+	bitSize := intBitSize(typeName)
 	r.Register(&Extractor{
 		TypeName: typeName,
 		ParseFunc: func(varName, fieldName string, isPointer bool) string {
 			if isPointer {
-				return fmt.Sprintf(`if u, err := strconv.ParseUint(%s, 10, 64); err == nil {
+				return fmt.Sprintf(`if u, err := strconv.ParseUint(%s, 10, %s); err == nil {
 	val := %s(u)
 	payload.%s = &val
 } else {
 	return fmt.Errorf("invalid %s: %%w", err)
-}`, varName, typeName, fieldName, fieldName)
+}`, varName, bitSize, typeName, fieldName, fieldName)
 			}
-			return fmt.Sprintf(`if u, err := strconv.ParseUint(%s, 10, 64); err == nil {
+			return fmt.Sprintf(`if u, err := strconv.ParseUint(%s, 10, %s); err == nil {
 	payload.%s = %s(u)
 } else {
 	return fmt.Errorf("invalid %s: %%w", err)
-}`, varName, fieldName, typeName, fieldName)
+}`, varName, bitSize, fieldName, typeName, fieldName)
 		},
 		RequiresError: true,
 	})
