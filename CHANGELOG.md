@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/kausys/apikit/compare/v0.5.1...v0.5.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* CodeQL integer conversion in handler codegen + swagger open-redirect ([#13](https://github.com/kausys/apikit/issues/13)) ([408dc9a](https://github.com/kausys/apikit/commit/408dc9ab0acbfe33d4143ff36056e1b8f336956f))
+
 ## [0.5.1](https://github.com/kausys/apikit/compare/v0.5.0...v0.5.1) (2026-04-16)
 
 
