@@ -124,18 +124,28 @@ func TestStringExtractor(t *testing.T) {
 func TestIntExtractor(t *testing.T) {
 	r := NewRegistry()
 
-	intTypes := []string{"int", "int8", "int16", "int32", "int64"}
-	for _, typeName := range intTypes {
+	// bitSize must match the target type so strconv.ParseInt range-checks
+	// the value before the cast (CodeQL go/incorrect-integer-conversion).
+	intTypes := map[string]string{
+		"int":   "0",
+		"int8":  "8",
+		"int16": "16",
+		"int32": "32",
+		"int64": "64",
+	}
+	for typeName, bitSize := range intTypes {
 		t.Run(typeName, func(t *testing.T) {
 			extractor, ok := r.Get(typeName)
 			if !ok {
 				t.Fatalf("expected %s extractor", typeName)
 			}
 
+			wantParse := "strconv.ParseInt(value, 10, " + bitSize + ")"
+
 			// Test non-pointer
 			code := extractor.ParseFunc("value", "Age", false)
-			if !strings.Contains(code, "strconv.ParseInt") {
-				t.Errorf("expected ParseInt call, got: %s", code)
+			if !strings.Contains(code, wantParse) {
+				t.Errorf("expected %q, got: %s", wantParse, code)
 			}
 			if !strings.Contains(code, "payload.Age") {
 				t.Errorf("expected field assignment, got: %s", code)
@@ -143,6 +153,9 @@ func TestIntExtractor(t *testing.T) {
 
 			// Test pointer
 			code = extractor.ParseFunc("value", "Age", true)
+			if !strings.Contains(code, wantParse) {
+				t.Errorf("expected %q, got: %s", wantParse, code)
+			}
 			if !strings.Contains(code, "&val") {
 				t.Errorf("expected pointer assignment, got: %s", code)
 			}
@@ -157,22 +170,35 @@ func TestIntExtractor(t *testing.T) {
 func TestUintExtractor(t *testing.T) {
 	r := NewRegistry()
 
-	uintTypes := []string{"uint", "uint8", "uint16", "uint32", "uint64"}
-	for _, typeName := range uintTypes {
+	// bitSize must match the target type so strconv.ParseUint range-checks
+	// the value before the cast (CodeQL go/incorrect-integer-conversion).
+	uintTypes := map[string]string{
+		"uint":   "0",
+		"uint8":  "8",
+		"uint16": "16",
+		"uint32": "32",
+		"uint64": "64",
+	}
+	for typeName, bitSize := range uintTypes {
 		t.Run(typeName, func(t *testing.T) {
 			extractor, ok := r.Get(typeName)
 			if !ok {
 				t.Fatalf("expected %s extractor", typeName)
 			}
 
+			wantParse := "strconv.ParseUint(value, 10, " + bitSize + ")"
+
 			// Test non-pointer
 			code := extractor.ParseFunc("value", "Count", false)
-			if !strings.Contains(code, "strconv.ParseUint") {
-				t.Errorf("expected ParseUint call, got: %s", code)
+			if !strings.Contains(code, wantParse) {
+				t.Errorf("expected %q, got: %s", wantParse, code)
 			}
 
 			// Test pointer
 			code = extractor.ParseFunc("value", "Count", true)
+			if !strings.Contains(code, wantParse) {
+				t.Errorf("expected %q, got: %s", wantParse, code)
+			}
 			if !strings.Contains(code, "&val") {
 				t.Errorf("expected pointer assignment, got: %s", code)
 			}
