@@ -115,7 +115,10 @@ func (h *Handler) ServeUI(w http.ResponseWriter, r *http.Request) {
 		// Check if we're at the mount point without trailing slash
 		// by looking at the original URL
 		if !strings.HasSuffix(r.RequestURI, "/") {
-			http.Redirect(w, r, r.RequestURI+"/", http.StatusMovedPermanently)
+			// Use a relative redirect ("./") so the browser appends a trailing
+			// slash to the current URL. Avoids passing attacker-controlled
+			// r.RequestURI to http.Redirect (gosec G710 open redirect).
+			http.Redirect(w, r, "./", http.StatusMovedPermanently)
 			return
 		}
 	}

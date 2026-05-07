@@ -28,7 +28,7 @@ func sanitize(v reflect.Value, depth int) any {
 	}
 
 	// Dereference pointers
-	for v.Kind() == reflect.Ptr {
+	for v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil
 		}
