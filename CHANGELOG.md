@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/kausys/apikit/compare/v0.5.2...v0.6.0) (2026-06-29)
+
+
+### Features
+
+* pluggable error renderer + ctx-aware response handling ([#16](https://github.com/kausys/apikit/issues/16)) ([a869232](https://github.com/kausys/apikit/commit/a869232b47cd1f2f4c85f22c0120b1b36ce139cb))
+
 ## [0.5.2](https://github.com/kausys/apikit/compare/v0.5.1...v0.5.2) (2026-05-07)
 
 
