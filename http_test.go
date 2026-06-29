@@ -2,6 +2,7 @@ package apikit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -76,7 +77,7 @@ func TestWriteJSONWithStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			writeJSONWithStatus(w, tt.status, tt.data)
+			writeJSONWithStatus(context.Background(), w, tt.status, tt.data)
 
 			if w.Code != tt.status {
 				t.Errorf("expected status %d, got %d", tt.status, w.Code)
@@ -114,7 +115,7 @@ func TestWriteError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			writeError(w, tt.err, tt.status)
+			writeError(context.Background(), w, tt.err, tt.status)
 
 			if w.Code != tt.status {
 				t.Errorf("expected status %d, got %d", tt.status, w.Code)
@@ -264,7 +265,7 @@ func TestWriteJSONWithStatus_EncodingError(t *testing.T) {
 	w := httptest.NewRecorder()
 	invalidData := make(chan int)
 
-	writeJSONWithStatus(w, http.StatusCreated, invalidData)
+	writeJSONWithStatus(context.Background(), w, http.StatusCreated, invalidData)
 
 	// Status should already be written
 	if w.Code != http.StatusCreated {

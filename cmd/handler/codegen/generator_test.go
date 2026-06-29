@@ -196,9 +196,9 @@ func TestGenerate_UsesHandleResponse(t *testing.T) {
 
 	codeStr := string(code)
 
-	// Should use HandleResponse instead of separate HandleError and WriteJSON
-	if !strings.Contains(codeStr, "apikit.HandleResponse(w, response, err)") {
-		t.Error("expected generated code to use apikit.HandleResponse")
+	// Should use the ctx-aware HandleResponseCtx (so consumer renderers get the request ctx)
+	if !strings.Contains(codeStr, "apikit.HandleResponseCtx(r.Context(), w, response, err)") {
+		t.Error("expected generated code to use apikit.HandleResponseCtx")
 	}
 
 	// Should NOT contain the old pattern

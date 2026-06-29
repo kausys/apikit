@@ -51,6 +51,40 @@ type statusCoder interface {
 	StatusCode() int
 }
 
+// ErrorRenderer turns a handler error into an HTTP response. Consumers register
+// their own (e.g. an RFC 7807 problem+json contract) via SetErrorRenderer
+// without changing generated code; the default reproduces apikit's built-in
+// error JSON, so an unset renderer behaves exactly as before.
+type ErrorRenderer interface {
+	RenderError(ctx context.Context, w http.ResponseWriter, err error)
+}
+
+// defaultErrorRenderer is the built-in renderer (status from statusCoder, else
+// 500) producing apikit's classic Error JSON.
+type defaultErrorRenderer struct{}
+
+func (defaultErrorRenderer) RenderError(ctx context.Context, w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if sc, ok := err.(statusCoder); ok {
+		status = sc.StatusCode()
+	}
+	writeError(ctx, w, err, status)
+}
+
+// globalErrorRenderer is the package-level error renderer, defaults to built-in.
+var globalErrorRenderer ErrorRenderer = defaultErrorRenderer{}
+
+// SetErrorRenderer overrides how errors are written for all generated handlers.
+func SetErrorRenderer(r ErrorRenderer) {
+	if r == nil {
+		r = defaultErrorRenderer{}
+	}
+	globalErrorRenderer = r
+}
+
+// GetErrorRenderer returns the current error renderer.
+func GetErrorRenderer() ErrorRenderer { return globalErrorRenderer }
+
 // WriteJSON writes a JSON response with default 200 OK status
 func WriteJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -60,17 +94,17 @@ func WriteJSON(w http.ResponseWriter, data any) {
 }
 
 // writeJSONWithStatus writes a JSON response with a specific status code
-func writeJSONWithStatus(w http.ResponseWriter, status int, data any) {
+func writeJSONWithStatus(ctx context.Context, w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		// Status already written, can't change it; log for observability
-		globalLogger.Error(context.Background(), "failed to encode JSON response", "error", err)
+		globalLogger.Error(ctx, "failed to encode JSON response", "error", err)
 	}
 }
 
-// writeError writes an error response with the given status code
-func writeError(w http.ResponseWriter, err error, status int) {
+// writeError writes an error response with the given status code (built-in format).
+func writeError(ctx context.Context, w http.ResponseWriter, err error, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -78,7 +112,7 @@ func writeError(w http.ResponseWriter, err error, status int) {
 	apiErr := &Error{}
 	if errors.As(err, &apiErr) {
 		if encErr := json.NewEncoder(w).Encode(apiErr); encErr != nil {
-			globalLogger.Error(context.Background(), "failed to encode error response", "error", encErr)
+			globalLogger.Error(ctx, "failed to encode error response", "error", encErr)
 		}
 		return
 	}
@@ -87,27 +121,35 @@ func writeError(w http.ResponseWriter, err error, status int) {
 	if encErr := json.NewEncoder(w).Encode(map[string]any{
 		"error": err.Error(),
 	}); encErr != nil {
-		globalLogger.Error(context.Background(), "failed to encode error response", "error", encErr)
+		globalLogger.Error(ctx, "failed to encode error response", "error", encErr)
 	}
 }
 
-// HandleError handles errors with custom status codes
+// HandleError handles errors with custom status codes (no request context).
+// Kept for backward compatibility; prefer HandleErrorCtx.
 func HandleError(w http.ResponseWriter, err error) {
-	if sc, ok := err.(statusCoder); ok {
-		writeError(w, err, sc.StatusCode())
-		return
-	}
-
-	// Default to 500 Internal Server Error
-	writeError(w, err, http.StatusInternalServerError)
+	HandleErrorCtx(context.Background(), w, err)
 }
 
-// HandleResponse handles both the response and error from a handler
-// This is the main function used by generated code
+// HandleErrorCtx renders an error through the registered ErrorRenderer, passing
+// the request context (so renderers can read request_id, trace, etc.).
+func HandleErrorCtx(ctx context.Context, w http.ResponseWriter, err error) {
+	globalErrorRenderer.RenderError(ctx, w, err)
+}
+
+// HandleResponse handles both the response and error from a handler (no request
+// context). Kept for backward compatibility; prefer HandleResponseCtx.
 func HandleResponse(w http.ResponseWriter, response any, err error) {
+	HandleResponseCtx(context.Background(), w, response, err)
+}
+
+// HandleResponseCtx is the main entry point used by generated code: it renders
+// the handler's error (via the registered ErrorRenderer) or its success
+// response, with the request context available throughout.
+func HandleResponseCtx(ctx context.Context, w http.ResponseWriter, response any, err error) {
 	// Handle error first
 	if err != nil {
-		HandleError(w, err)
+		HandleErrorCtx(ctx, w, err)
 		return
 	}
 
@@ -158,6 +200,6 @@ func HandleResponse(w http.ResponseWriter, response any, err error) {
 		}
 	} else {
 		// Default: write JSON with 200 OK
-		writeJSONWithStatus(w, http.StatusOK, response)
+		writeJSONWithStatus(ctx, w, http.StatusOK, response)
 	}
 }
