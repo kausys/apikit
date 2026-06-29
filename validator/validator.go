@@ -73,6 +73,14 @@ func RegisterValidation(f func(v *validator.Validate, translator ut.Translator))
 	f(validate, translator)
 }
 
+// ResetValidator rebuilds the shared validator from scratch, discarding any
+// custom validations registered via RegisterValidation. Intended for test
+// isolation (the validator is a process-wide singleton); do not call on a
+// request path.
+func ResetValidator() {
+	initValidator()
+}
+
 // Struct validates a struct without context
 func Struct(s any) error {
 	if err := validate.Struct(s); err != nil {
