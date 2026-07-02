@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/kausys/apikit/compare/v0.6.0...v0.6.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **cmd:** handler gen accepts directories and ./... patterns ([#18](https://github.com/kausys/apikit/issues/18)) ([40c1c94](https://github.com/kausys/apikit/commit/40c1c949d74f55aa984b8b9a498a403c9856505c))
+
 ## [0.6.0](https://github.com/kausys/apikit/compare/v0.5.2...v0.6.0) (2026-06-29)
 
 
