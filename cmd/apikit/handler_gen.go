@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -40,9 +41,20 @@ from the GOFILE environment variable.
 
 You can also specify a source file explicitly using the --file flag.
 
+Arguments may be files, directories, or Go-style recursive patterns:
+a directory processes its .go files, "dir/..." (or "./...") walks the
+subtree. Expanded patterns skip *_apikit.go, *_test.go, hidden/underscore
+directories, testdata and vendor; files without annotations are skipped.
+
 Examples:
   # From go:generate (automatic)
   //go:generate apikit handler gen
+
+  # Everything below the current directory
+  apikit handler gen ./...
+
+  # One package directory
+  apikit handler gen ./auth
 
   # Explicit file
   apikit handler gen --file handlers.go
@@ -108,14 +120,10 @@ func runHandlerGen(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting current directory: %w", err)
 	}
 
-	// Resolve and validate all source files
-	var resolvedFiles []string
-	for _, file := range sourceFiles {
-		filePath := filepath.Clean(filepath.Join(cwd, file))
-		if _, err := os.Stat(filePath); os.IsNotExist(err) { //nolint:gosec // path is cleaned above
-			return fmt.Errorf("source file not found: %s", filePath)
-		}
-		resolvedFiles = append(resolvedFiles, filePath)
+	// Expand file, directory, and dir/... arguments into concrete source files
+	resolvedFiles, err := expandSourceArgs(cwd, sourceFiles)
+	if err != nil {
+		return err
 	}
 
 	if verbose {
@@ -141,6 +149,94 @@ func runHandlerGen(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// expandSourceArgs resolves handler-gen arguments into concrete .go paths.
+// Files pass through untouched; a directory contributes its own .go files;
+// "dir/..." (Go tooling style) walks the subtree. Expanded matches skip
+// generated wrappers (*_apikit.go), tests, hidden/underscore directories,
+// testdata and vendor.
+func expandSourceArgs(cwd string, args []string) ([]string, error) {
+	var files []string
+	for _, arg := range args {
+		path := arg
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+
+		if base, ok := strings.CutSuffix(path, "..."); ok {
+			root := filepath.Clean(base)
+			matched, err := walkSources(root)
+			if err != nil {
+				return nil, fmt.Errorf("walking %s: %w", arg, err)
+			}
+			if len(matched) == 0 {
+				return nil, fmt.Errorf("no Go source files under %s", arg)
+			}
+			files = append(files, matched...)
+			continue
+		}
+
+		path = filepath.Clean(path)
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("source file not found: %s", path)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspecting %s: %w", arg, err)
+		}
+		if !info.IsDir() {
+			files = append(files, path)
+			continue
+		}
+
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", arg, err)
+		}
+		n := 0
+		for _, e := range entries {
+			if !e.IsDir() && isSourceCandidate(e.Name()) {
+				files = append(files, filepath.Join(path, e.Name()))
+				n++
+			}
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("no Go source files in %s", arg)
+		}
+	}
+	return files, nil
+}
+
+// walkSources collects source candidates below root, skipping directories the
+// Go toolchain also ignores (hidden, underscore-prefixed, testdata, vendor).
+func walkSources(root string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+				name == "testdata" || name == "vendor") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if isSourceCandidate(d.Name()) {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
+}
+
+// isSourceCandidate reports whether a file name is a hand-written Go source.
+func isSourceCandidate(name string) bool {
+	return strings.HasSuffix(name, ".go") &&
+		!strings.HasSuffix(name, "_apikit.go") &&
+		!strings.HasSuffix(name, "_test.go")
 }
 
 func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
