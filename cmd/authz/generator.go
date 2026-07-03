@@ -15,10 +15,23 @@ import (
 
 // Config holds the configuration for the authz code generator.
 type Config struct {
-	InputCSV    string // path to the CSV file
-	OutputDir   string // output directory for generated files
-	PackageName string // Go package name for generated code
-	SchemaFile  string // path to authz.yaml (optional, auto-detected if empty)
+	InputCSV    string   // path to a single CSV file (kept for back-compat)
+	InputCSVs   []string // paths to one or more CSV files, merged in order
+	OutputDir   string   // output directory for generated files
+	PackageName string   // Go package name for generated code
+	SchemaFile  string   // path to authz.yaml (optional, auto-detected if empty)
+}
+
+// inputs returns the CSV paths to parse: InputCSVs when set, otherwise the
+// single InputCSV.
+func (c Config) inputs() []string {
+	if len(c.InputCSVs) > 0 {
+		return c.InputCSVs
+	}
+	if c.InputCSV != "" {
+		return []string{c.InputCSV}
+	}
+	return nil
 }
 
 // csvLine represents a parsed row from the CSV, keyed by column name.
@@ -34,9 +47,13 @@ func Generate(cfg Config) error {
 		return err
 	}
 
-	lines, err := parseCSV(cfg.InputCSV, schema)
-	if err != nil {
-		return fmt.Errorf("parsing CSV: %w", err)
+	var lines []csvLine
+	for _, path := range cfg.inputs() {
+		parsed, err := parseCSV(path, schema)
+		if err != nil {
+			return fmt.Errorf("parsing CSV %q: %w", path, err)
+		}
+		lines = append(lines, parsed...)
 	}
 
 	if err := os.MkdirAll(cfg.OutputDir, 0750); err != nil {
@@ -91,8 +108,10 @@ func resolveSchema(cfg Config) (*Schema, error) {
 	if cfg.SchemaFile != "" {
 		return LoadSchema(cfg.SchemaFile)
 	}
-	if nearby := FindSchemaFile(cfg.InputCSV); nearby != "" {
-		return LoadSchema(nearby)
+	if inputs := cfg.inputs(); len(inputs) > 0 {
+		if nearby := FindSchemaFile(inputs[0]); nearby != "" {
+			return LoadSchema(nearby)
+		}
 	}
 	return DefaultSchema(), nil
 }

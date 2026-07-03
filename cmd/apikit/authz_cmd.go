@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	authzInput   string
+	authzInputs  []string
 	authzOutput  string
 	authzPackage string
 	authzSchema  string
@@ -47,7 +47,7 @@ Examples:
 
 //nolint:gochecknoinits // cobra command registration requires init
 func init() {
-	authzGenCmd.Flags().StringVar(&authzInput, "input", "resource_actions.csv", "path to the CSV definition file")
+	authzGenCmd.Flags().StringArrayVar(&authzInputs, "input", []string{"resource_actions.csv"}, "path to a CSV definition file; repeat to merge several (e.g. staff.csv + tenant.csv)")
 	authzGenCmd.Flags().StringVar(&authzOutput, "output", ".", "output directory for generated files")
 	authzGenCmd.Flags().StringVar(&authzPackage, "package", "authz", "Go package name for generated code")
 	authzGenCmd.Flags().StringVar(&authzSchema, "schema", "", "path to authz.yaml schema file (auto-detected next to CSV if not specified)")
@@ -58,11 +58,11 @@ func init() {
 
 func runAuthzGen(_ *cobra.Command, _ []string) error {
 	if verbose {
-		fmt.Printf("Generating authz code from %s into %s (package %s)\n", authzInput, authzOutput, authzPackage)
+		fmt.Printf("Generating authz code from %v into %s (package %s)\n", authzInputs, authzOutput, authzPackage)
 	}
 
 	cfg := authz.Config{
-		InputCSV:    authzInput,
+		InputCSVs:   authzInputs,
 		OutputDir:   authzOutput,
 		PackageName: authzPackage,
 		SchemaFile:  authzSchema,
