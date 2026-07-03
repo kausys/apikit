@@ -14,6 +14,10 @@ type HttpResponse struct {
 	Body        any               `json:"body"`
 	Headers     map[string]string `json:"headers"`
 	ContentType string            `json:"contentType"`
+	// Cookies are emitted as individual Set-Cookie headers. Unlike Headers
+	// (a map, one value per key), this allows multiple Set-Cookie headers in a
+	// single response — e.g. an access cookie plus a refresh cookie.
+	Cookies []*http.Cookie `json:"-"`
 }
 
 // NewHttpResponse creates a new HttpResponse with the given status code and body
@@ -37,6 +41,15 @@ func (r *HttpResponse) WithHeader(key, value string) *HttpResponse {
 		r.Headers = make(map[string]string)
 	}
 	r.Headers[key] = value
+	return r
+}
+
+// WithCookie appends a Set-Cookie to the response. Multiple calls emit multiple
+// Set-Cookie headers.
+func (r *HttpResponse) WithCookie(cookie *http.Cookie) *HttpResponse {
+	if cookie != nil {
+		r.Cookies = append(r.Cookies, cookie)
+	}
 	return r
 }
 
@@ -166,6 +179,13 @@ func HandleResponseCtx(ctx context.Context, w http.ResponseWriter, response any,
 		// Set custom headers
 		for key, value := range httpResp.Headers {
 			w.Header().Set(key, value)
+		}
+
+		// Emit cookies as individual Set-Cookie headers (multiple allowed).
+		for _, cookie := range httpResp.Cookies {
+			if cookie != nil {
+				http.SetCookie(w, cookie)
+			}
 		}
 
 		// Set content type

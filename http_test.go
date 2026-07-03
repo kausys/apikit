@@ -337,6 +337,38 @@ func TestHttpResponse_WithHeaders(t *testing.T) {
 	}
 }
 
+func TestHttpResponse_WithCookies(t *testing.T) {
+	w := httptest.NewRecorder()
+	resp := NewHttpResponse(http.StatusOK, map[string]string{"ok": "true"}).
+		WithCookie(&http.Cookie{Name: "access", Value: "a", Path: "/", HttpOnly: true}).
+		WithCookie(&http.Cookie{Name: "refresh", Value: "r", Path: "/refresh", HttpOnly: true}).
+		WithCookie(nil) // nil cookies are ignored
+
+	HandleResponse(w, resp, nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Fatalf("Expected 2 Set-Cookie headers, got %d", len(cookies))
+	}
+	got := map[string]string{}
+	for _, c := range cookies {
+		got[c.Name] = c.Value
+	}
+	if got["access"] != "a" || got["refresh"] != "r" {
+		t.Errorf("Expected access=a refresh=r, got %v", got)
+	}
+	// The refresh cookie keeps its scoped path.
+	for _, c := range cookies {
+		if c.Name == "refresh" && c.Path != "/refresh" {
+			t.Errorf("Expected refresh cookie Path /refresh, got %s", c.Path)
+		}
+	}
+}
+
 func TestHttpResponse_WithCustomContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	resp := NewHttpResponse(http.StatusOK, "Hello, World!").
