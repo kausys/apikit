@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/kausys/apikit/compare/v0.6.1...v0.7.0) (2026-07-03)
+
+
+### Features
+
+* **authz:** accept repeatable --input to merge multiple CSVs ([#20](https://github.com/kausys/apikit/issues/20)) ([c0db8d0](https://github.com/kausys/apikit/commit/c0db8d066305df3d03a97e18c091a2a230a7557b))
+
 ## [0.6.1](https://github.com/kausys/apikit/compare/v0.6.0...v0.6.1) (2026-07-02)
 
 
