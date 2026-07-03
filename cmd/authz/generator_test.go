@@ -322,3 +322,54 @@ func readFile(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(data)
 }
+
+func TestGenerate_MultiInput(t *testing.T) {
+	dir := t.TempDir()
+
+	schemaPath := filepath.Join(dir, "authz.yaml")
+	require.NoError(t, os.WriteFile(schemaPath, []byte(`
+csv_columns: [scope, section, resource, action, profile]
+permission:
+  fields:
+    - {name: resource, type: string, column: resource}
+    - {name: action, type: Action, column: action}
+    - {name: scope, type: Scope, column: scope}
+    - {name: section, type: string, column: section}
+groups:
+  - {name: profiles, column: profile, separator: "|", scope_column: scope}
+`), 0600))
+
+	staffPath := filepath.Join(dir, "staff.csv")
+	require.NoError(t, os.WriteFile(staffPath, []byte(`
+global, Admin Access, staff, view and list all staff, admin
+`), 0600))
+
+	tenantPath := filepath.Join(dir, "tenant.csv")
+	require.NoError(t, os.WriteFile(tenantPath, []byte(`
+tenant, Customer Accounts, accounts, view and list all accounts, admin
+`), 0600))
+
+	outDir := filepath.Join(dir, "out")
+	err := authz.Generate(authz.Config{
+		InputCSVs:   []string{staffPath, tenantPath},
+		OutputDir:   outDir,
+		PackageName: "mypkg",
+		SchemaFile:  schemaPath,
+	})
+	require.NoError(t, err)
+
+	// Both CSVs merged: staff (global) + accounts (tenant) resources present.
+	resources := readFile(t, filepath.Join(outDir, "zz_generated_resources.go"))
+	assert.Contains(t, resources, "ResourceStaff")
+	assert.Contains(t, resources, "ResourceAccounts")
+
+	// The section string field flows into Permission with a getter.
+	types := readFile(t, filepath.Join(outDir, "zz_generated_types.go"))
+	assert.Contains(t, types, "section string")
+	assert.Contains(t, types, "func (p Permission) Section() string")
+
+	// Both scopes seeded into DefaultProfilePolicies.
+	profiles := readFile(t, filepath.Join(outDir, "zz_generated_profiles.go"))
+	assert.Contains(t, profiles, "case ScopeGlobal:")
+	assert.Contains(t, profiles, "case ScopeTenant:")
+}
