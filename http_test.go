@@ -340,8 +340,8 @@ func TestHttpResponse_WithHeaders(t *testing.T) {
 func TestHttpResponse_WithCookies(t *testing.T) {
 	w := httptest.NewRecorder()
 	resp := NewHttpResponse(http.StatusOK, map[string]string{"ok": "true"}).
-		WithCookie(&http.Cookie{Name: "access", Value: "a", Path: "/", HttpOnly: true}).
-		WithCookie(&http.Cookie{Name: "refresh", Value: "r", Path: "/refresh", HttpOnly: true}).
+		WithCookie(&http.Cookie{Name: "access", Value: "a", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}).
+		WithCookie(&http.Cookie{Name: "refresh", Value: "r", Path: "/refresh", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}).
 		WithCookie(nil) // nil cookies are ignored
 
 	HandleResponse(w, resp, nil)
