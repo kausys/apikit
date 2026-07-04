@@ -7,7 +7,7 @@
     },
     "cmd": {
       "component": "cmd",
-      "separator": "/"
+      "tag-separator": "/"
     }
   },
   "plugins": [
