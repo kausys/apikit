@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/kausys/apikit/compare/v0.7.2...v0.7.3) (2026-07-04)
+
+
+### Miscellaneous
+
+* **release:** manage cmd submodule as its own release-please component ([#26](https://github.com/kausys/apikit/issues/26)) ([71d31c5](https://github.com/kausys/apikit/commit/71d31c570d2f0032215e2374530ad4fc464cef20))
+
 ## [0.7.2](https://github.com/kausys/apikit/compare/v0.7.1...v0.7.2) (2026-07-04)
 
 
