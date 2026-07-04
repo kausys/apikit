@@ -1,7 +1,11 @@
 {
   "release-type": "simple",
   "packages": {
-    ".": {}
+    ".": {},
+    "cmd": {
+      "component": "cmd",
+      "separator": "/"
+    }
   },
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
