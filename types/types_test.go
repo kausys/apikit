@@ -21,7 +21,7 @@ func TestNewRegistry(t *testing.T) {
 	expectedTypes := []string{
 		"string", "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64",
-		"float32", "float64", "bool", "time.Time",
+		"float32", "float64", "bool", "time.Time", "uuid.UUID",
 	}
 
 	for _, typeName := range expectedTypes {
@@ -306,6 +306,42 @@ func TestTimeExtractor(t *testing.T) {
 
 	if !extractor.RequiresError {
 		t.Error("time.Time extractor should require error handling")
+	}
+}
+
+func TestUUIDExtractor(t *testing.T) {
+	r := NewRegistry()
+	extractor, ok := r.Get("uuid.UUID")
+	if !ok {
+		t.Fatal("expected uuid.UUID extractor")
+	}
+
+	// Should import google/uuid
+	if extractor.Import != "github.com/google/uuid" {
+		t.Errorf("expected github.com/google/uuid import, got: %q", extractor.Import)
+	}
+
+	// Non-pointer: parses via uuid.Parse into the field directly
+	code := extractor.ParseFunc("value", "MemberID", false)
+	if !strings.Contains(code, "uuid.Parse(value)") {
+		t.Errorf("expected uuid.Parse call, got: %s", code)
+	}
+	if !strings.Contains(code, "payload.MemberID = ") {
+		t.Errorf("expected field assignment, got: %s", code)
+	}
+	// Must NOT emit the invalid direct cast uuid.UUID(value).
+	if strings.Contains(code, "uuid.UUID(value)") {
+		t.Errorf("must not cast string to uuid.UUID, got: %s", code)
+	}
+
+	// Pointer: assigns the address of the parsed value
+	code = extractor.ParseFunc("value", "MemberID", true)
+	if !strings.Contains(code, "&") {
+		t.Errorf("expected pointer assignment, got: %s", code)
+	}
+
+	if !extractor.RequiresError {
+		t.Error("uuid.UUID extractor should require error handling")
 	}
 }
 
