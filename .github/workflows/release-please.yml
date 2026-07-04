@@ -21,7 +21,23 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ steps.app-token.outputs.token }}
+
+      # release-please manages the root module (tag vX.Y.Z). Mirror that exact
+      # version onto the cmd submodule (tag cmd/vX.Y.Z) so both Go modules always
+      # release in lockstep at the same version. Done here rather than via
+      # release-please components because linked-versions cannot keep identical
+      # versions when include-component-in-tag=false
+      # (googleapis/release-please#1750), which the root's plain vX.Y.Z tag needs.
+      - name: Mirror release tag to the cmd submodule
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/cmd/${{ steps.release.outputs.tag_name }}" \
+            -f sha="${{ steps.release.outputs.sha }}"
