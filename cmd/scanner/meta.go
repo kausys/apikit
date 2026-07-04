@@ -299,6 +299,11 @@ func parseSecuritySchemes(comments []string, startIdx int) map[string]*SecurityS
 				currentScheme.Scheme = strings.TrimSpace(strings.TrimPrefix(cleanLine, "scheme:"))
 			case strings.HasPrefix(cleanLine, "bearerFormat:"):
 				currentScheme.BearerFormat = strings.TrimSpace(strings.TrimPrefix(cleanLine, "bearerFormat:"))
+			case strings.HasPrefix(cleanLine, "name:"):
+				// apiKey parameter name (header/query/cookie). The leading
+				// "- name:" is the scheme key (handled above); a non-dashed
+				// "name:" property sets the apiKey's parameter name.
+				currentScheme.Name = strings.TrimSpace(strings.TrimPrefix(cleanLine, "name:"))
 			}
 		}
 	}
