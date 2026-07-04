@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/kausys/apikit/compare/v0.7.0...v0.7.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **http:** emit multiple Set-Cookie headers via HttpResponse.Cookies ([#22](https://github.com/kausys/apikit/issues/22)) ([f95f562](https://github.com/kausys/apikit/commit/f95f56272957c00e0d80a8a8a9c2c6b17e490153))
+
 ## [0.7.0](https://github.com/kausys/apikit/compare/v0.6.1...v0.7.0) (2026-07-03)
 
 
