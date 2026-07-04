@@ -1,12 +1,22 @@
 {
   "release-type": "simple",
   "packages": {
-    ".": {},
+    ".": {
+      "component": "apikit",
+      "include-component-in-tag": false
+    },
     "cmd": {
       "component": "cmd",
       "separator": "/"
     }
   },
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "apikit",
+      "components": ["apikit", "cmd"]
+    }
+  ],
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },
