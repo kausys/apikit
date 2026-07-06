@@ -95,7 +95,7 @@ func runSwaggerDownload(cmd *cobra.Command, args []string) error {
 	fmt.Printf("     var swaggerUIData []byte\n\n")
 	fmt.Printf("  2. Create the handler:\n")
 	fmt.Printf("     handler, err := swagger.New(swaggerUIData, swagger.Config{\n")
-	fmt.Printf("         Specs: map[string][]byte{\"api\": specData},\n")
+	fmt.Printf("         Specs: []swagger.Spec{{Name: \"api\", Data: specData}},\n")
 	fmt.Printf("     })\n")
 
 	return nil

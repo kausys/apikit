@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
-	"slices"
 	"strings"
 )
 
@@ -17,6 +16,15 @@ import (
 type Resource struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+}
+
+// Spec is a single named OpenAPI spec entry. Specs are listed (and served
+// in the Swagger UI dropdown) in the order they appear in Config.Specs.
+type Spec struct {
+	// Name is the display name and query-param identifier (e.g. "@staff (v3)").
+	Name string
+	// Data is the raw spec content (YAML or JSON bytes).
+	Data []byte
 }
 
 // Config holds the configuration for the Swagger UI handler.
@@ -27,8 +35,9 @@ type Config struct {
 	SpecPath string
 	// ResourcesPath is the URL path to serve the resources list (e.g., "/openapi/resources")
 	ResourcesPath string
-	// Specs is a map of spec name to spec content (YAML or JSON bytes)
-	Specs map[string][]byte
+	// Specs is the ordered list of spec name/content pairs. The Swagger UI
+	// dropdown lists them in this order.
+	Specs []Spec
 	// DefaultSpec is the name of the default spec to serve when no query param is provided
 	DefaultSpec string
 }
@@ -38,6 +47,7 @@ type Handler struct {
 	config        Config
 	swaggerUI     fs.FS
 	resourcesJSON []byte
+	specsByName   map[string][]byte
 }
 
 // New creates a new Swagger UI handler with the given configuration.
@@ -60,18 +70,13 @@ func New(swaggerUIZip []byte, config Config) (*Handler, error) {
 		return nil, err
 	}
 
-	// Build resources list in deterministic order
-	names := make([]string, 0, len(config.Specs))
-	for name := range config.Specs {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-
-	var resources []Resource
-	for _, name := range names {
+	specsByName := make(map[string][]byte, len(config.Specs))
+	resources := make([]Resource, 0, len(config.Specs))
+	for _, s := range config.Specs {
+		specsByName[s.Name] = s.Data
 		resources = append(resources, Resource{
-			Name: name,
-			URL:  config.SpecPath + "?spec=" + name,
+			Name: s.Name,
+			URL:  config.SpecPath + "?spec=" + s.Name,
 		})
 	}
 
@@ -84,6 +89,7 @@ func New(swaggerUIZip []byte, config Config) (*Handler, error) {
 		config:        config,
 		swaggerUI:     zipReader,
 		resourcesJSON: resourcesJSON,
+		specsByName:   specsByName,
 	}, nil
 }
 
@@ -193,14 +199,11 @@ func (h *Handler) serveSpec(w http.ResponseWriter, r *http.Request) {
 		specName = h.config.DefaultSpec
 	}
 
-	spec, ok := h.config.Specs[specName]
+	spec, ok := h.specsByName[specName]
 	if !ok {
-		// If no specific spec requested and we have a default, use it
-		if len(h.config.Specs) > 0 && specName == "" {
-			for _, s := range h.config.Specs {
-				spec = s
-				break
-			}
+		// If no specific spec requested and we have a default, use the first one.
+		if specName == "" && len(h.config.Specs) > 0 {
+			spec = h.config.Specs[0].Data
 		} else {
 			http.NotFound(w, r)
 			return
