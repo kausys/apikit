@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/kausys/apikit/compare/v0.7.3...v0.8.0) (2026-07-06)
+
+
+### Features
+
+* **types:** register uuid.UUID header/query/path extractor ([#34](https://github.com/kausys/apikit/issues/34)) ([eea194a](https://github.com/kausys/apikit/commit/eea194a2912940d228252051e153736845100574))
+
+
+### Bug Fixes
+
+* **swagger:** preserve caller-defined spec order in dropdown ([#35](https://github.com/kausys/apikit/issues/35)) ([0256c9f](https://github.com/kausys/apikit/commit/0256c9fafc00c2389a1d149a7ba029ca980798dd))
+
 ## [0.7.3](https://github.com/kausys/apikit/compare/v0.7.2...v0.7.3) (2026-07-04)
 
 
