@@ -158,6 +158,30 @@ func (r *Registry) registerBuiltins() {
 		},
 		RequiresError: true,
 	})
+
+	// uuid.UUID - parses the canonical string form via uuid.Parse. A direct
+	// uuid.UUID(val) cast is invalid (the underlying type is [16]byte, not a
+	// string), so a dedicated extractor is required for header/query/path UUID
+	// params.
+	r.Register(&Extractor{
+		TypeName: "uuid.UUID",
+		Import:   "github.com/google/uuid",
+		ParseFunc: func(varName, fieldName string, isPointer bool) string {
+			if isPointer {
+				return fmt.Sprintf(`if u, err := uuid.Parse(%s); err == nil {
+	payload.%s = &u
+} else {
+	return fmt.Errorf("invalid %s: %%w", err)
+}`, varName, fieldName, fieldName)
+			}
+			return fmt.Sprintf(`if u, err := uuid.Parse(%s); err == nil {
+	payload.%s = u
+} else {
+	return fmt.Errorf("invalid %s: %%w", err)
+}`, varName, fieldName, fieldName)
+		},
+		RequiresError: true,
+	})
 }
 
 // intBitSize returns the strconv bitSize argument that matches a Go integer
