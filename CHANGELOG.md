@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/kausys/apikit/compare/v0.8.0...v0.8.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* **http:** add GetCookie for cookie extractors ([#37](https://github.com/kausys/apikit/issues/37)) ([df9bf39](https://github.com/kausys/apikit/commit/df9bf39b5b55b54979bd132d2ab38f3b1d2cc5bb))
+
 ## [0.8.0](https://github.com/kausys/apikit/compare/v0.7.3...v0.8.0) (2026-07-06)
 
 
