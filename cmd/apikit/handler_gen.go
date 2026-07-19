@@ -286,6 +286,14 @@ func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
 		return nil
 	}
 
+	// Detect encoding.TextUnmarshaler on custom field types so extractors can
+	// emit UnmarshalText instead of an invalid string cast.
+	if err := parser.AnnotateTextUnmarshalers(sourceFilePath, result); err != nil {
+		if verbose {
+			log.Printf("Warning: TextUnmarshaler annotation failed: %v", err)
+		}
+	}
+
 	if verbose {
 		log.Printf("Found %d handler(s):", len(result.Handlers)) //nolint:gosec // count is safe
 		for _, h := range result.Handlers {

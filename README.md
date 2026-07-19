@@ -369,6 +369,30 @@ e.GET("/users/:id", getUserAPIKit(GetUser))
 | `form:"name"` | Form field / multipart |
 | `json:"name"` | JSON body (auto-detected) |
 
+### Custom parameter types
+
+Path, query, header, cookie, and form values are strings. Codegen resolves them in this order:
+
+1. Built-in scalars (`string`, `int`, `bool`, …)
+2. Types registered in the extractor registry (`handler/types`)
+3. Types that implement `encoding.TextUnmarshaler` — emit `UnmarshalText` (no per-type registry entry)
+4. Fallback string cast (typical for string-backed enums)
+
+Implement `UnmarshalText` on typed IDs and similar value objects so they can sit on path/query fields directly:
+
+```go
+type TenantID struct{ /* … */ }
+
+func (id *TenantID) UnmarshalText(text []byte) error { /* parse */ return nil }
+
+type GetUserRequest struct {
+    WorkspaceID TenantID `path:"workspaceId" validate:"required"`
+    Status      Status   `query:"status"` // string enum → Status(val) cast
+}
+```
+
+JSON body fields already use `encoding.TextUnmarshaler` via `encoding/json`; this makes path/query/header/form match that behavior.
+
 ### File Uploads
 
 ```go

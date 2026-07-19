@@ -79,6 +79,11 @@ type Field struct {
 	// Nested struct information
 	NestedStruct *Struct // If this field is a struct type, contains its definition
 	PackagePath  string  // Import path for the type (e.g., "myapp/pagination")
+
+	// ImplementsTextUnmarshaler is set when the field's type (or a pointer to
+	// it) implements encoding.TextUnmarshaler. Path/query/header/form extractors
+	// then emit UnmarshalText instead of a string cast.
+	ImplementsTextUnmarshaler bool
 }
 
 // Source represents information about where the handler was found
