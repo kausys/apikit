@@ -369,6 +369,18 @@ func TestHttpResponse_WithCookies(t *testing.T) {
 	}
 }
 
+func TestGetCookie(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "Authorization", Value: "session-token"})
+
+	if got := GetCookie(req, "Authorization"); got != "session-token" {
+		t.Errorf("GetCookie(present) = %q, want %q", got, "session-token")
+	}
+	if got := GetCookie(req, "missing"); got != "" {
+		t.Errorf("GetCookie(missing) = %q, want empty string", got)
+	}
+}
+
 func TestHttpResponse_WithCustomContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	resp := NewHttpResponse(http.StatusOK, "Hello, World!").

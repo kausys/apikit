@@ -53,6 +53,14 @@ func (r *HttpResponse) WithCookie(cookie *http.Cookie) *HttpResponse {
 	return r
 }
 
+// GetCookie returns the named cookie's value, or "" if absent (mirrors r.Header.Get).
+func GetCookie(r *http.Request, name string) string {
+	if c, err := r.Cookie(name); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
 // WithContentType sets a custom content type
 func (r *HttpResponse) WithContentType(contentType string) *HttpResponse {
 	r.ContentType = contentType
