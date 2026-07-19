@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/kausys/apikit/compare/v0.8.1...v0.8.2) (2026-07-19)
+
+
+### Bug Fixes
+
+* **ci:** make cmd submodule tag steps idempotent ([#39](https://github.com/kausys/apikit/issues/39)) ([8333bc1](https://github.com/kausys/apikit/commit/8333bc1d52372fd8a23446d8c09c32904960a90b))
+
 ## [0.8.1](https://github.com/kausys/apikit/compare/v0.8.0...v0.8.1) (2026-07-19)
 
 
