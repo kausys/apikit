@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/kausys/apikit/compare/v0.8.2...v0.9.0) (2026-07-19)
+
+
+### Features
+
+* **handler:** parse path params via TextUnmarshaler ([#41](https://github.com/kausys/apikit/issues/41)) ([715ad48](https://github.com/kausys/apikit/commit/715ad482c8dc945d18f4188645932dd8acfb3366))
+
 ## [0.8.2](https://github.com/kausys/apikit/compare/v0.8.1...v0.8.2) (2026-07-19)
 
 
