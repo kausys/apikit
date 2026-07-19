@@ -34,15 +34,23 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
-          version: latest
+          version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # release-please also mirrors cmd/vX.Y.Z on release_created; keep this for
+      # manual v* tags and make it idempotent so re-runs do not fail with
+      # "tag already exists" (exit 128).
       - name: Create sub-module tags
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          git tag "cmd/${TAG}"
-          git push origin "cmd/${TAG}"
+          CMD_TAG="cmd/${TAG}"
+          if git rev-parse "refs/tags/${CMD_TAG}" >/dev/null 2>&1; then
+            echo "${CMD_TAG} already exists — skip"
+            exit 0
+          fi
+          git tag "${CMD_TAG}"
+          git push origin "${CMD_TAG}"

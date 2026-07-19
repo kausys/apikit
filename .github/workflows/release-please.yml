@@ -38,6 +38,20 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          gh api "repos/${{ github.repository }}/git/refs" \
-            -f ref="refs/tags/cmd/${{ steps.release.outputs.tag_name }}" \
-            -f sha="${{ steps.release.outputs.sha }}"
+          REF="refs/tags/cmd/${{ steps.release.outputs.tag_name }}"
+          set +e
+          out=$(gh api "repos/${{ github.repository }}/git/refs" \
+            -f ref="${REF}" \
+            -f sha="${{ steps.release.outputs.sha }}" 2>&1)
+          code=$?
+          set -e
+          if [ "${code}" -eq 0 ]; then
+            echo "created ${REF}"
+            exit 0
+          fi
+          if echo "${out}" | grep -qi 'Reference already exists'; then
+            echo "${REF} already exists — skip"
+            exit 0
+          fi
+          echo "${out}"
+          exit "${code}"
