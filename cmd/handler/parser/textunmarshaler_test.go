@@ -55,3 +55,22 @@ func TestAnnotateTextUnmarshalers(t *testing.T) {
 		t.Errorf("Filter (Status string enum): expected ImplementsTextUnmarshaler=false")
 	}
 }
+
+// Package has a deliberate undefined symbol (broken_ref.go). Annotation must
+// still succeed — same situation as regenerating while Router refs *_apikit.go.
+func TestAnnotateTextUnmarshalers_DespitePackageErrors(t *testing.T) {
+	filename := filepath.Join("testdata", "textunmarshaler", "handler.go")
+	p := New()
+	result, err := p.ParseFile(filename)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	if err := AnnotateTextUnmarshalers(filename, result); err != nil {
+		t.Fatalf("AnnotateTextUnmarshalers: %v", err)
+	}
+	for _, f := range result.Handlers[0].Struct.Fields {
+		if f.Name == "ID" && !f.ImplementsTextUnmarshaler {
+			t.Fatalf("ID should be annotated despite package type errors")
+		}
+	}
+}

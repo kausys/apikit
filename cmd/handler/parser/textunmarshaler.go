@@ -28,13 +28,12 @@ func AnnotateTextUnmarshalers(filename string, result *ParseResult) error {
 		return nil
 	}
 	pkg := pkgs[0]
-	if len(pkg.Errors) > 0 {
-		// Type-check failures should not hard-fail generation; keep cast fallback.
-		return nil
-	}
 	if pkg.Types == nil {
 		return nil
 	}
+	// Stale *_apikit.go in the same package often fails typecheck while we
+	// regenerate (e.g. invalid string casts). Types are usually still
+	// populated — continue so we can emit UnmarshalText and heal the package.
 
 	iface := textUnmarshalerIface()
 	for i := range result.Handlers {
