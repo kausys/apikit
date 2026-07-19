@@ -370,8 +370,14 @@ func TestHttpResponse_WithCookies(t *testing.T) {
 }
 
 func TestGetCookie(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "Authorization", Value: "session-token"})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{
+		Name:     "Authorization",
+		Value:    "session-token",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
 
 	if got := GetCookie(req, "Authorization"); got != "session-token" {
 		t.Errorf("GetCookie(present) = %q, want %q", got, "session-token")
