@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/kausys/apikit/compare/v0.9.1...v0.9.2) (2026-08-01)
+
+
+### Bug Fixes
+
+* reject the conditions that silently produced a wrong or shrunken output ([#45](https://github.com/kausys/apikit/issues/45)) ([9ef0092](https://github.com/kausys/apikit/commit/9ef0092c1495e437275ce53b1b6751e3dcc5e1a8))
+
 ## [0.9.1](https://github.com/kausys/apikit/compare/v0.9.0...v0.9.1) (2026-07-19)
 
 
