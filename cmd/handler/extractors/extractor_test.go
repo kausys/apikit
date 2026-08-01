@@ -104,3 +104,59 @@ func TestGenerateSliceCodeByType_UintBitSizeMatchesType(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateCodeByType_TextUnmarshaler(t *testing.T) {
+	field := &parser.Field{
+		Name:                      "ID",
+		Type:                      "TypedID",
+		ImplementsTextUnmarshaler: true,
+	}
+	code, _ := GenerateCodeByType(`r.PathValue("id")`, "ID", "TypedID", field)
+	if !strings.Contains(code, "UnmarshalText([]byte(val))") {
+		t.Errorf("expected UnmarshalText in generated code, got: %s", code)
+	}
+	if strings.Contains(code, "TypedID(val)") {
+		t.Errorf("did not expect string cast for TextUnmarshaler type, got: %s", code)
+	}
+}
+
+func TestGenerateCodeByType_StringEnumCast(t *testing.T) {
+	field := &parser.Field{
+		Name: "Filter",
+		Type: "Status",
+	}
+	code, _ := GenerateCodeByType(`r.URL.Query().Get("filter")`, "Filter", "Status", field)
+	if !strings.Contains(code, "payload.Filter = Status(val)") {
+		t.Errorf("expected string cast for enum, got: %s", code)
+	}
+	if strings.Contains(code, "UnmarshalText") {
+		t.Errorf("did not expect UnmarshalText for string enum, got: %s", code)
+	}
+}
+
+func TestGenerateCodeByType_TextUnmarshalerPointer(t *testing.T) {
+	field := &parser.Field{
+		Name:                      "OptionalID",
+		Type:                      "*TypedID",
+		IsPointer:                 true,
+		ImplementsTextUnmarshaler: true,
+	}
+	code, _ := GenerateCodeByType(`r.URL.Query().Get("optionalId")`, "OptionalID", "TypedID", field)
+	if !strings.Contains(code, "payload.OptionalID = &parsed") {
+		t.Errorf("expected pointer assignment, got: %s", code)
+	}
+}
+
+func TestGenerateSliceCodeByType_TextUnmarshaler(t *testing.T) {
+	field := &parser.Field{
+		Name:                      "IDs",
+		Type:                      "[]TypedID",
+		IsSlice:                   true,
+		SliceType:                 "TypedID",
+		ImplementsTextUnmarshaler: true,
+	}
+	code, _ := GenerateSliceCodeByType(`r.URL.Query()["ids"]`, "IDs", "TypedID", field)
+	if !strings.Contains(code, "UnmarshalText([]byte(val))") {
+		t.Errorf("expected UnmarshalText in slice code, got: %s", code)
+	}
+}

@@ -220,6 +220,12 @@ func GenerateCodeByType(varName, fieldName, typeName string, field *parser.Field
 
 			// Generate extraction code with the custom parser
 			code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+		} else if field.ImplementsTextUnmarshaler {
+			// Types that implement encoding.TextUnmarshaler (e.g. typed IDs)
+			parsingFunc := func(v, f string) string {
+				return GenerateTextUnmarshalerParsing(v, f, typeName, field.IsPointer)
+			}
+			code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 		} else if !field.IsEmbedded {
 			// Fallback: for unknown custom types (e.g., enums), cast the string value
 			// This handles types like model.AgentStatus, model.UserRole, etc.
@@ -331,6 +337,17 @@ func GenerateSliceCodeByType(varName, fieldName, elementType string, field *pars
 				// and may include error handling with return statements
 				typeExtractor.ParseFunc("val", "parsed", false),
 				fieldName, fieldName)
+		} else if field.ImplementsTextUnmarshaler {
+			code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
+		payload.%s = make([]%s, 0, len(vals))
+		for i, val := range vals {
+			var parsed %s
+			if err := parsed.UnmarshalText([]byte(val)); err != nil {
+				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
+			}
+			payload.%s = append(payload.%s, parsed)
+		}
+	}`, varName, fieldName, elementType, elementType, fieldName, fieldName, fieldName)
 		} else {
 			// Fallback: for unknown types, assign the string slice as-is
 			// Users will need to handle conversion themselves in their handler
@@ -341,6 +358,22 @@ func GenerateSliceCodeByType(varName, fieldName, elementType string, field *pars
 	}
 
 	return code, imports
+}
+
+// GenerateTextUnmarshalerParsing emits UnmarshalText assignment for path/query/header/form.
+func GenerateTextUnmarshalerParsing(varName, fieldName, typeName string, isPointer bool) string {
+	if isPointer {
+		return fmt.Sprintf(`var parsed %s
+	if err := parsed.UnmarshalText([]byte(%s)); err != nil {
+		return fmt.Errorf("invalid %s: %%w", err)
+	}
+	payload.%s = &parsed`, typeName, varName, fieldName, fieldName)
+	}
+	return fmt.Sprintf(`var parsed %s
+	if err := parsed.UnmarshalText([]byte(%s)); err != nil {
+		return fmt.Errorf("invalid %s: %%w", err)
+	}
+	payload.%s = parsed`, typeName, varName, fieldName, fieldName)
 }
 
 // GenerateDefaultValue generates code to set a default value
