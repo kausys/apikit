@@ -119,7 +119,8 @@ func TestCollectSpecNames(t *testing.T) {
 			g := createTestGenerator()
 			g.scanner.Routes = tt.routes
 
-			result := g.collectSpecNames()
+			result, err := g.collectSpecNames()
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1207,7 +1208,8 @@ func TestEmptyRouteSpecs(t *testing.T) {
 		},
 	}
 
-	specNames := g.collectSpecNames()
+	specNames, err := g.collectSpecNames()
+	require.NoError(t, err)
 	assert.Contains(t, specNames, scanner.DefaultSpec)
 }
 

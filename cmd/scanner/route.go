@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"go/ast"
 	"strings"
 )
@@ -46,6 +47,26 @@ func (s *Scanner) processRoutes(filePath string, file *ast.File) error {
 		extractConsumes(route, funcDecl.Doc)
 		extractProduces(route, funcDecl.Doc)
 		extractIgnoredParameters(route, funcDecl.Doc)
+
+		// Routes are keyed by operation ID in ONE map for the whole scan, across
+		// every spec. A second route claiming an id does not produce two
+		// operations — it REPLACES the first, which then vanishes from its spec
+		// with nothing reported.
+		//
+		// Never legitimate: the operation ID is an operation's identity in the
+		// generated document, and client generators name their methods after it.
+		// It is easy to hit across specs, where the two routes sit in unrelated
+		// files and neither author sees the other.
+		if prev, taken := s.Routes[operationID]; taken &&
+			(prev.SourceFile != filePath || prev.Path != path || prev.Method != method) {
+			return fmt.Errorf(
+				"duplicate operation ID %q:\n    %s %s (%s)\n    %s %s (%s)\n"+
+					"  operation IDs must be unique across ALL specs — the second "+
+					"silently replaces the first",
+				operationID,
+				prev.Method, prev.Path, prev.SourceFile,
+				method, path, filePath)
+		}
 
 		s.Routes[operationID] = route
 		s.RouteSources[operationID] = filePath

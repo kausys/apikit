@@ -39,6 +39,7 @@ func New(opts ...Option) *Generator {
 		scanner.WithDir(cfg.Dir),
 		scanner.WithPattern(cfg.Pattern),
 		scanner.WithIgnorePaths(cfg.IgnorePaths...),
+		scanner.WithStrict(cfg.Strict),
 	}
 
 	return &Generator{

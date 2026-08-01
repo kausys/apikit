@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"go/ast"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -21,10 +23,40 @@ func getCompiledRegex(pattern string) *regexp.Regexp {
 	return re
 }
 
-// shouldIgnorePath checks if a path should be ignored based on ignore patterns.
+// shouldIgnorePath reports whether path matches any ignore pattern.
+//
+// Matching is on whole path SEGMENTS, not raw substrings. `--ignore foo/bar`
+// matches `/src/foo/bar/x.go` and the package path `mod/foo/bar`, but not
+// `/src/myfoo/barbecue` — which plain strings.Contains did.
+//
+// It is called with two different kinds of path (a package's import path and
+// each of its absolute file paths), so an anchored prefix match would not work
+// for both; segment containment is what is meaningful to either. Note this means
+// an ignore pattern is matched wherever it appears in the path, which is why a
+// pattern should be specific enough to be unambiguous — a caller relying on a
+// pattern that only ever matched because of where the repo happens to be checked
+// out is relying on an accident.
 func shouldIgnorePath(path string, ignorePaths []string) bool {
+	segs := strings.Split(filepath.ToSlash(path), "/")
 	for _, pattern := range ignorePaths {
-		if strings.Contains(path, pattern) {
+		want := strings.Split(strings.Trim(filepath.ToSlash(pattern), "/"), "/")
+		if len(want) == 0 || (len(want) == 1 && want[0] == "") {
+			continue
+		}
+		if containsSegments(segs, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsSegments reports whether want appears as a consecutive run in segs.
+func containsSegments(segs, want []string) bool {
+	if len(want) > len(segs) {
+		return false
+	}
+	for i := 0; i+len(want) <= len(segs); i++ {
+		if slices.Equal(segs[i:i+len(want)], want) {
 			return true
 		}
 	}

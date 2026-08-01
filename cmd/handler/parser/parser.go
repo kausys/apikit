@@ -111,12 +111,20 @@ func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, result *ParseRes
 		return nil
 	}
 
-	// Validate handler signature
+	// Validate handler signature.
+	//
+	// An ERROR, not a warning. The author asked for a wrapper by writing the
+	// annotation; dropping the handler silently means the call site
+	// (`fooAPIKit(h.foo)`) has nothing to refer to, and that surfaces as an
+	// undefined-symbol error in a different file with nothing pointing back to
+	// the cause. It was also only ever printed under --verbose.
 	if !p.isValidHandlerSignature(fn) {
 		pos := p.fset.Position(fn.Pos())
-		warning := fmt.Sprintf("%s: function %s has apikit:handler comment but invalid signature",
-			pos, fn.Name.Name)
-		result.Warnings = append(result.Warnings, warning)
+		result.Errors = append(result.Errors, fmt.Sprintf(
+			"%s: %s has an apikit:handler comment but an invalid signature "+
+				"(want func(context.Context, Payload) (T, error), optionally "+
+				"followed by http.ResponseWriter and/or *http.Request)",
+			pos, fn.Name.Name))
 		return nil
 	}
 
@@ -157,10 +165,30 @@ func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, result *ParseRes
 		}
 	}
 
-	// Look up struct info
+	// Look up struct info.
+	//
+	// The lookup is FILE-scoped: result.Structs holds only what this file
+	// declares. A payload declared in another file of the same package, or
+	// qualified from another package (getTypeName reduces `dto.Foo` to `Foo`),
+	// is not found here.
+	//
+	// Not finding it is an ERROR, and it is the most dangerous condition this
+	// parser can hit. With h.Struct nil, prepareHandlerData returns early and the
+	// template emits a parse function whose whole body is `return nil`: no path
+	// or query extraction, no body unmarshal, no validation. That wrapper
+	// COMPILES and registers on its route, so the failure is a handler receiving
+	// a zero payload in production with nothing having gone wrong at build time.
 	structName := p.getTypeName(params[1].Type)
 	if s, ok := result.Structs[structName]; ok {
 		h.Struct = s
+	} else {
+		result.Errors = append(result.Errors, fmt.Sprintf(
+			"%s: %s takes payload %q, which is not declared in this file — "+
+				"apikit resolves the payload type per file, so it must live "+
+				"alongside its handler (a type from another file or package "+
+				"would silently generate a wrapper that parses nothing)",
+			p.fset.Position(fn.Pos()), fn.Name.Name, structName))
+		return nil
 	}
 
 	// Get return type (first return value)

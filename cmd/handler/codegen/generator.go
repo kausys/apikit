@@ -85,7 +85,10 @@ func (g *Generator) Generate(result *parser.ParseResult) ([]byte, error) {
 	}
 
 	// Prepare template data using extractors
-	data := g.prepareTemplateData(result)
+	data, err := g.prepareTemplateData(result)
+	if err != nil {
+		return nil, err
+	}
 
 	// Execute template
 	var buf bytes.Buffer
@@ -108,7 +111,7 @@ func (g *Generator) Generate(result *parser.ParseResult) ([]byte, error) {
 	return formatted, nil
 }
 
-func (g *Generator) prepareTemplateData(result *parser.ParseResult) *TemplateData {
+func (g *Generator) prepareTemplateData(result *parser.ParseResult) (*TemplateData, error) {
 	data := &TemplateData{
 		PackageName: result.Source.Package,
 		Imports:     []string{},
@@ -122,7 +125,10 @@ func (g *Generator) prepareTemplateData(result *parser.ParseResult) *TemplateDat
 	importsMap["github.com/kausys/apikit"] = true
 
 	for _, handler := range result.Handlers {
-		hd := g.prepareHandlerData(&handler, importsMap)
+		hd, err := g.prepareHandlerData(&handler, importsMap)
+		if err != nil {
+			return nil, err
+		}
 		data.Handlers = append(data.Handlers, hd)
 	}
 
@@ -132,10 +138,10 @@ func (g *Generator) prepareTemplateData(result *parser.ParseResult) *TemplateDat
 	}
 	slices.Sort(data.Imports)
 
-	return data
+	return data, nil
 }
 
-func (g *Generator) prepareHandlerData(handler *parser.Handler, importsMap map[string]bool) HandlerData {
+func (g *Generator) prepareHandlerData(handler *parser.Handler, importsMap map[string]bool) (HandlerData, error) {
 	hd := HandlerData{
 		Name:              handler.Name,
 		WrapperName:       toCamelCasePrivate(handler.Name) + "APIKit",
@@ -146,8 +152,21 @@ func (g *Generator) prepareHandlerData(handler *parser.Handler, importsMap map[s
 		HasRequest:        handler.HasRequest,
 	}
 
+	// Refuse rather than emit a wrapper that parses nothing.
+	//
+	// This used to `return hd`, which produced a parse function whose entire body
+	// was `return nil` — no extraction, no body unmarshal, no validation — and
+	// that wrapper compiled and served requests with a zero payload.
+	//
+	// The parser now rejects an unresolvable payload type before we get here, so
+	// this is unreachable through the CLI. It stays as a hard stop because
+	// codegen is callable on a hand-built ParseResult, and the failure it guards
+	// is silent at every other layer.
 	if handler.Struct == nil {
-		return hd
+		return HandlerData{}, fmt.Errorf(
+			"handler %s: payload type %q was never resolved to a struct; "+
+				"generating it would produce a wrapper that parses nothing",
+			handler.Name, handler.ParamType)
 	}
 
 	// Use extractors to generate code for each field
@@ -185,7 +204,7 @@ func (g *Generator) prepareHandlerData(handler *parser.Handler, importsMap map[s
 		hd.MaxMemory = 32 << 20 // 32MB default
 	}
 
-	return hd
+	return hd, nil
 }
 
 func (g *Generator) generateExtractionCode(s *parser.Struct, importsMap map[string]bool) string {
