@@ -271,11 +271,18 @@ func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
 		return fmt.Errorf("parsing file: %w", err)
 	}
 
-	// Print warnings if any
-	if len(result.Warnings) > 0 && verbose {
-		for _, warning := range result.Warnings {
-			log.Printf("Warning: %s", warning) //nolint:gosec // warning from parser output
-		}
+	// Errors first: these describe a wrapper that would be generated WRONG rather
+	// than not at all — one that compiles and misbehaves at runtime. Reported
+	// together so one run shows every problem in the file, and always fatal.
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("%s:\n  %s", sourceFilePath, strings.Join(result.Errors, "\n  "))
+	}
+
+	// Warnings are printed unconditionally, not only under --verbose. A warning
+	// nobody sees is not a warning; the conditions that used to hide here are
+	// errors now, and whatever lands in this slice next deserves to be read.
+	for _, warning := range result.Warnings {
+		log.Printf("Warning: %s", warning) //nolint:gosec // warning from parser output
 	}
 
 	// Check if any handlers were found

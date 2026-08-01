@@ -106,6 +106,15 @@ type ParseResult struct {
 	// Source information
 	Source Source
 
-	// Errors encountered during parsing (non-fatal)
+	// Warnings are advisory: the wrapper generated alongside them is still correct.
 	Warnings []string
+
+	// Errors are conditions that would make the generated wrapper WRONG rather
+	// than absent — it compiles, it gets registered on a route, and it silently
+	// does the wrong thing at runtime. Generation must not proceed with any of
+	// these.
+	//
+	// They are collected rather than returned at the first occurrence so that one
+	// run reports every problem in the file.
+	Errors []string
 }

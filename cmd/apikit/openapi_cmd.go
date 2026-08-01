@@ -16,6 +16,7 @@ var (
 	openapiDir          string
 	openapiNoCache      bool
 	openapiNoDefault    bool
+	openapiStrict       bool
 	openapiFlatten      bool
 	openapiValidate     bool
 	openapiIgnorePaths  []string
@@ -101,6 +102,7 @@ func init() {
 	openapiGenCmd.Flags().BoolVar(&openapiMultiSpec, "multi-specs", false, "Generate multiple specs based on spec: directives")
 	openapiGenCmd.Flags().StringVar(&openapiSpecName, "spec", "", "Generate only a specific spec by name")
 	openapiGenCmd.Flags().BoolVar(&openapiNoDefault, "no-default", false, "Skip generating the default spec for routes without spec: directives")
+	openapiGenCmd.Flags().BoolVar(&openapiStrict, "strict", false, "Fail instead of silently dropping routes (missing spec: under --no-default, packages that do not type-check)")
 	openapiGenCmd.Flags().BoolVar(&openapiEnumRefs, "enum-refs", false, "Generate enums as $ref references instead of inline")
 
 	openapiCmd.AddCommand(openapiGenCmd)
@@ -126,6 +128,7 @@ func runOpenapiGen(cmd *cobra.Command, args []string) error {
 		generator.WithCleanUnused(openapiCleanUnused),
 		generator.WithNoDefault(openapiNoDefault),
 		generator.WithEnumRefs(openapiEnumRefs),
+		generator.WithStrict(openapiStrict),
 	)
 
 	if openapiMultiSpec {

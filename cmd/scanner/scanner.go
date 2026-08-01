@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -19,6 +20,11 @@ type Config struct {
 	Dir string
 	// IgnorePaths contains path patterns to exclude during scanning
 	IgnorePaths []string
+
+	// Strict turns conditions that silently degrade the generated spec into
+	// errors. Off by default: existing callers may depend on a scan that limps
+	// past a broken package.
+	Strict bool
 }
 
 // Option is a function type for configuring the Scanner.
@@ -35,6 +41,13 @@ func WithPattern(pattern string) Option {
 func WithDir(dir string) Option {
 	return func(c *Config) {
 		c.Dir = dir
+	}
+}
+
+// WithStrict makes silent spec degradation fatal (see Config.Strict).
+func WithStrict(strict bool) Option {
+	return func(c *Config) {
+		c.Strict = strict
 	}
 }
 
@@ -117,13 +130,31 @@ func (s *Scanner) Scan() error {
 		return err
 	}
 
-	// First pass: collect type information (skip packages with errors)
+	// First pass: collect type information (skip packages with errors).
+	//
+	// A package that does not type-check keeps only its swagger:meta (see the
+	// second pass) — every route it declares is dropped. So a compile break in
+	// one package does not fail generation, it QUIETLY SHRINKS the spec, and the
+	// result is committed looking like a legitimate diff. Under --strict that is
+	// an error instead.
+	var broken []string
 	for _, pkg := range pkgs {
 		if packages.PrintErrors([]*packages.Package{pkg}) > 0 {
+			if s.config.Strict && !shouldIgnorePath(pkg.PkgPath, s.config.IgnorePaths) {
+				broken = append(broken, pkg.PkgPath)
+				continue
+			}
 			log.Printf("warning: skipping package %q due to compilation errors", pkg.PkgPath)
 			continue
 		}
 		s.collectTypeInfo(pkg)
+	}
+	if len(broken) > 0 {
+		return fmt.Errorf(
+			"these packages do not type-check, so every route they declare would be "+
+				"dropped from the spec:\n    %s\n  fix the build, or drop --strict to "+
+				"generate from what compiles",
+			strings.Join(broken, "\n    "))
 	}
 
 	// Second pass: process files

@@ -59,7 +59,10 @@ func (g *Generator) GenerateMulti() (map[string]*spec.OpenAPI, error) {
 // assembleMulti creates multiple OpenAPI specs from scanned data.
 func (g *Generator) assembleMulti() (map[string]*spec.OpenAPI, error) {
 	// Collect all spec names from routes
-	specNames := g.collectSpecNames()
+	specNames, err := g.collectSpecNames()
+	if err != nil {
+		return nil, err
+	}
 
 	// If no specs found, generate single default spec
 	if len(specNames) == 0 {
@@ -87,23 +90,44 @@ func (g *Generator) assembleMulti() (map[string]*spec.OpenAPI, error) {
 }
 
 // collectSpecNames collects all unique spec names from routes.
-func (g *Generator) collectSpecNames() map[string]bool {
+//
+// Under --no-default a route with no spec: directive belongs to no spec at all,
+// so it is written nowhere — the annotation is present, the handler is served,
+// and the operation is simply absent from every generated document. That is the
+// most likely way to lose a route while editing annotations, which is why
+// --strict reports it.
+func (g *Generator) collectSpecNames() (map[string]bool, error) {
 	specNames := make(map[string]bool)
+	var orphans []string
 
 	for _, route := range g.scanner.Routes {
 		if len(route.Specs) == 0 {
 			if !g.config.NoDefault {
 				// Routes without spec: go to default
 				specNames[scanner.DefaultSpec] = true
+				continue
 			}
-		} else {
-			for _, s := range route.Specs {
-				specNames[s] = true
+			if g.config.Strict {
+				orphans = append(orphans, fmt.Sprintf("%s %s (%s)",
+					route.Method, route.Path, route.SourceFile))
 			}
+			continue
+		}
+		for _, s := range route.Specs {
+			specNames[s] = true
 		}
 	}
 
-	return specNames
+	if len(orphans) > 0 {
+		slices.Sort(orphans)
+		return nil, fmt.Errorf(
+			"these routes have no spec: directive and --no-default is set, so they "+
+				"would not appear in ANY spec:\n    %s\n  add a spec: line, or drop "+
+				"--no-default to collect them into the default spec",
+			strings.Join(orphans, "\n    "))
+	}
+
+	return specNames, nil
 }
 
 // assembleForSpec creates an OpenAPI spec for a specific spec name.
@@ -285,7 +309,10 @@ func (g *Generator) GetSpecNames() ([]string, error) {
 		}
 	}
 
-	specNames := g.collectSpecNames()
+	specNames, err := g.collectSpecNames()
+	if err != nil {
+		return nil, err
+	}
 	names := make([]string, 0, len(specNames))
 	for name := range specNames {
 		names = append(names, name)

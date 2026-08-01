@@ -23,6 +23,10 @@ type Config struct {
 	CleanUnused bool
 	// NoDefault skips generating the default spec for routes without spec: directives
 	NoDefault bool
+
+	// Strict turns conditions that silently drop routes from the output into
+	// errors. Off by default so existing callers keep their behaviour.
+	Strict bool
 	// EnumRefs generates enums as $ref references to components/schemas instead of inline
 	EnumRefs bool
 }
@@ -84,6 +88,13 @@ func WithValidation(validate bool) Option {
 func WithCleanUnused(clean bool) Option {
 	return func(c *Config) {
 		c.CleanUnused = clean
+	}
+}
+
+// WithStrict makes silent route loss fatal (see Config.Strict).
+func WithStrict(strict bool) Option {
+	return func(c *Config) {
+		c.Strict = strict
 	}
 }
 
