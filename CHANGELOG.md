@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/kausys/apikit/compare/v0.9.2...v0.9.3) (2026-08-08)
+
+
+### Bug Fixes
+
+* reject an --ignore that excludes every file, and report unresolved response models ([#47](https://github.com/kausys/apikit/issues/47)) ([02431fe](https://github.com/kausys/apikit/commit/02431fe3dfa16ab608beb8b8f4dd3aa7737d5911))
+
 ## [0.9.2](https://github.com/kausys/apikit/compare/v0.9.1...v0.9.2) (2026-08-01)
 
 
