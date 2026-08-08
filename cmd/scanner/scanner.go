@@ -140,7 +140,7 @@ func (s *Scanner) Scan() error {
 	var broken []string
 	for _, pkg := range pkgs {
 		if packages.PrintErrors([]*packages.Package{pkg}) > 0 {
-			if s.config.Strict && !shouldIgnorePath(pkg.PkgPath, s.config.IgnorePaths) {
+			if s.config.Strict && !s.packageIgnored(pkg) {
 				broken = append(broken, pkg.PkgPath)
 				continue
 			}
@@ -158,10 +158,12 @@ func (s *Scanner) Scan() error {
 	}
 
 	// Second pass: process files
+	var scanned, excluded int
 	for _, pkg := range pkgs {
 		hasErrors := len(pkg.Errors) > 0
 
 		if shouldIgnorePath(pkg.PkgPath, s.config.IgnorePaths) {
+			excluded += len(pkg.GoFiles)
 			continue
 		}
 
@@ -172,8 +174,10 @@ func (s *Scanner) Scan() error {
 			filePath := pkg.GoFiles[i]
 
 			if shouldIgnorePath(filePath, s.config.IgnorePaths) {
+				excluded++
 				continue
 			}
+			scanned++
 
 			s.pkgInfo[file] = pkg
 
@@ -193,10 +197,52 @@ func (s *Scanner) Scan() error {
 		}
 	}
 
+	// An --ignore that excludes every file is the largest silent shrink there is:
+	// no route, no meta, nothing written, and the generator still exits 0, so the
+	// specs on disk keep whatever they held and the run looks like a no-op that
+	// had nothing to do.
+	//
+	// Guarded on excluded > 0 rather than on the route count, so the only run this
+	// can turn into a failure is one whose own ignore patterns emptied it. A tree
+	// that genuinely carries no directives still scans its files and still
+	// generates, exactly as before.
+	if scanned == 0 && excluded > 0 {
+		return fmt.Errorf(
+			"--ignore excluded every file under %q (%d excluded, 0 scanned), so there "+
+				"is nothing to generate from: %s\n  a pattern matches whole path segments "+
+				"of BOTH the package import path and each absolute file path, so one "+
+				"naming a directory anywhere above the module also matches everything "+
+				"inside it",
+			s.config.Pattern, excluded, strings.Join(s.config.IgnorePaths, ", "))
+	}
+
 	// Third pass: resolve embedded types
 	s.resolveEmbeddedTypes()
 
 	return nil
+}
+
+// packageIgnored reports whether the ignore patterns exclude pkg outright —
+// either by its import path, or because every file it holds is excluded.
+//
+// Both halves are needed because a pattern is matched against both kinds of
+// path: one written to line up with absolute file paths never matches an import
+// path, and the caller still meant that package to be left alone. Testing only
+// the import path made such a package count as broken under --strict, reporting
+// a compile error in code the run was told to skip.
+func (s *Scanner) packageIgnored(pkg *packages.Package) bool {
+	if shouldIgnorePath(pkg.PkgPath, s.config.IgnorePaths) {
+		return true
+	}
+	if len(s.config.IgnorePaths) == 0 || len(pkg.GoFiles) == 0 {
+		return false
+	}
+	for _, filePath := range pkg.GoFiles {
+		if !shouldIgnorePath(filePath, s.config.IgnorePaths) {
+			return false
+		}
+	}
+	return true
 }
 
 // collectTypeInfo collects type information from a package.
