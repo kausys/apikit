@@ -68,6 +68,11 @@ func (g *Generator) prepare() error {
 	// Build secondary index for multi-spec model lookups
 	g.buildStructIndex()
 
+	// After the index: that is what a declared schema name resolves against.
+	if err := g.checkDeclaredSchemasResolve(); err != nil {
+		return err
+	}
+
 	if g.config.UseCache {
 		if err := g.cacheScannedData(); err != nil {
 			return fmt.Errorf("failed to cache scanned data: %w", err)
