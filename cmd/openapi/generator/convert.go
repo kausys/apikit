@@ -83,6 +83,25 @@ func shortTypeName(typeName string) string {
 	return typeName
 }
 
+// configuredType is what the config says a type is, when it says anything: a
+// customTypes entry names a type by its qualified form (kernel.Coin,
+// decimal.Decimal) and renders as written, before any model or enum that
+// happens to share its short name. Without it, kernel.Coin — a string — took
+// the $ref of the `Coin` enum another package declares, because the enum
+// lookup falls back to the unqualified name and a registration by qualified
+// name never got a say.
+func configuredType(names ...string) *TypeInfo {
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if info := GetCustomType(name); info != nil {
+			return info
+		}
+	}
+	return nil
+}
+
 // resolveModelRef resolves a Go type name to a model name in components/schemas.
 // Returns the model name and true if found, or empty string and false otherwise.
 func (g *Generator) resolveModelRef(typeName string) (string, bool) {
@@ -115,8 +134,12 @@ func (g *Generator) resolveModelRef(typeName string) (string, bool) {
 	return "", false
 }
 
-// isReferenceType checks if a type should be a $ref (model or enum).
+// isReferenceType checks if a type should be a $ref (model or enum). A type the
+// config registers is neither, whatever shares its short name.
 func (g *Generator) isReferenceType(typeName string) bool {
+	if configuredType(typeName) != nil {
+		return false
+	}
 	if _, ok := g.resolveModelRef(typeName); ok {
 		return true
 	}
@@ -214,6 +237,13 @@ func (g *Generator) structToSchema(s *scanner.StructInfo) *spec.Schema {
 
 // typeToSchema converts a Go type name to a schema.
 func (g *Generator) typeToSchema(typeName string) *spec.Schema {
+	// The config's word comes first: a registered type renders as configured.
+	if configuredType(typeName) != nil {
+		schema := &spec.Schema{}
+		g.setSchemaType(schema, typeName)
+		return schema
+	}
+
 	// Check if it resolves to a model
 	if modelName, ok := g.resolveModelRef(typeName); ok {
 		g.markSchemaAsReferenced(modelName)
