@@ -80,15 +80,15 @@ func Withdraw() {}
 	}
 
 	t.Run("unregistered, the enum still wins (the documented fallback)", func(t *testing.T) {
-		ClearCustomTypes()
+		ResetToDefaults()
 		got := generate()
 		assert.Equal(t, "#/components/schemas/Coin", got.bodyRef)
 		assert.Equal(t, "#/components/schemas/Coin", got.queryRef)
 	})
 
 	t.Run("registered by qualified name, it renders as configured", func(t *testing.T) {
-		ClearCustomTypes()
-		t.Cleanup(ClearCustomTypes)
+		ResetToDefaults()
+		t.Cleanup(ResetToDefaults)
 		RegisterTypeInfo("kernel.Coin", &TypeInfo{Type: "string", Example: "BTC"})
 
 		got := generate()
@@ -99,8 +99,8 @@ func Withdraw() {}
 	})
 
 	t.Run("the legacy enum is untouched by the registration", func(t *testing.T) {
-		ClearCustomTypes()
-		t.Cleanup(ClearCustomTypes)
+		ResetToDefaults()
+		t.Cleanup(ResetToDefaults)
 		RegisterTypeInfo("kernel.Coin", &TypeInfo{Type: "string"})
 
 		g := New(WithDir(tmpDir), WithPattern("./..."), WithCache(false), WithEnumRefs(true))
