@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/kausys/apikit/compare/v0.9.3...v0.9.4) (2026-09-16)
+
+
+### Bug Fixes
+
+* **openapi:** a configured custom type wins over a same-short-name enum or model ([#49](https://github.com/kausys/apikit/issues/49)) ([2f81933](https://github.com/kausys/apikit/commit/2f81933f78e25da5797a469b90142a8b1e27dee8))
+
 ## [0.9.3](https://github.com/kausys/apikit/compare/v0.9.2...v0.9.3) (2026-08-08)
 
 
