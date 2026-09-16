@@ -195,8 +195,7 @@ func TestFormatError(t *testing.T) {
 	}
 
 	// Check that it's a ValidationError
-	var validationError ValidationError
-	if !errors.As(valErr, &validationError) {
+	if _, ok := errors.AsType[ValidationError](valErr); !ok {
 		t.Errorf("expected ValidationError type, got %T", valErr)
 	}
 }

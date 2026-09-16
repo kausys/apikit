@@ -12,8 +12,7 @@ import (
 // renderers use it to populate their own errors[] without depending on the
 // internal detail type.
 func FieldErrorsOf(err error) ([]validator.FieldError, bool) {
-	var apiErr *Error
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*Error](err); ok {
 		if fe, ok := apiErr.Details.([]validator.FieldError); ok {
 			return fe, true
 		}

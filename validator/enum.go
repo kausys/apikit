@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	ut "github.com/go-playground/universal-translator"
@@ -21,7 +22,7 @@ type EnumValuer interface {
 
 func registerEnumValidation(v *validator.Validate, tr ut.Translator) {
 	_ = v.RegisterValidation("validEnum", func(fl validator.FieldLevel) bool {
-		if e, ok := fl.Field().Interface().(ValidEnum); ok {
+		if e, ok := reflect.TypeAssert[ValidEnum](fl.Field()); ok {
 			return e.IsValid()
 		}
 		return false

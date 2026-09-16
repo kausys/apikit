@@ -105,8 +105,9 @@ func (g *Generator) fieldToParameter(f *scanner.FieldInfo, path string) *spec.Pa
 	// Create schema for the parameter
 	var schema *spec.Schema
 
-	// Check if the field type is an enum
-	if enumInfo := g.findEnumInfo(f.Type); enumInfo != nil {
+	// Check if the field type is an enum — unless the config registered the
+	// type, in which case it renders as configured (see configuredType).
+	if enumInfo := g.findEnumInfo(f.Type); enumInfo != nil && configuredType(f.QualifiedType, f.Type) == nil {
 		if g.config.EnumRefs {
 			g.markSchemaAsReferenced(enumInfo.TypeName)
 			schema = &spec.Schema{Ref: "#/components/schemas/" + enumInfo.TypeName}
