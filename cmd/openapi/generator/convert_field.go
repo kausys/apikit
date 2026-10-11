@@ -115,44 +115,80 @@ func (g *Generator) fieldToParameter(f *scanner.FieldInfo, path string) *spec.Pa
 		in = "path"
 	}
 
-	// Create schema for the parameter
-	var schema *spec.Schema
-
-	// Check if the field type is an enum — unless the config registered the
-	// type, in which case it renders as configured (see configuredType).
-	if enumInfo := g.findEnumInfo(f.Type); enumInfo != nil && configuredType(f.QualifiedType, f.Type) == nil {
-		if g.config.EnumRefs {
-			g.markSchemaAsReferenced(enumInfo.TypeName)
-			schema = &spec.Schema{Ref: "#/components/schemas/" + enumInfo.TypeName}
-		} else {
-			schema = g.createInlineEnumSchema(enumInfo)
-			// Override example if field has its own
-			if f.Example != "" {
-				schema.Examples = []any{castToSchemaType(f.Example, schema.Type)}
-			}
-		}
-	} else {
-		schema = &spec.Schema{}
-		g.setSchemaType(schema, f.Type, f.QualifiedType)
-		g.applyValidations(schema, f)
-
-		if f.Example != "" {
-			schema.Examples = []any{castToSchemaType(f.Example, schema.Type)}
-		}
-		if f.Default != "" {
-			schema.Default = castToSchemaType(f.Default, schema.Type)
-		}
-	}
-
 	param := &spec.Parameter{
 		Name:        paramName,
 		In:          in,
 		Description: f.Description,
 		Required:    f.Required || in == "path", // path parameters are always required
-		Schema:      schema,
+		Schema:      g.parameterSchema(f),
 	}
 
 	return param
+}
+
+// parameterSchema is the schema of one parameter: a slice is an array of its
+// element (?tag=a&tag=b), and the element is what the type resolves to — an
+// enum, a model or a schema the config names, by reference, else the
+// primitive it is. A parameter used to be read as its element alone, and as a
+// primitive whatever it was: a []string parameter was documented as one
+// string, and a typed identifier the config describes as a bare string.
+func (g *Generator) parameterSchema(f *scanner.FieldInfo) *spec.Schema {
+	item := g.parameterItemSchema(f)
+	if !f.IsArray {
+		return item
+	}
+	schema := &spec.Schema{
+		Type:  spec.NewSchemaType(scanner.TypeArray),
+		Items: item,
+	}
+	// The rules of a slice's validate tag are about the slice; those after
+	// dive reach the items.
+	g.applyValidations(schema, f)
+	return schema
+}
+
+// parameterItemSchema is the schema of a parameter's value, or of each value
+// of a slice.
+func (g *Generator) parameterItemSchema(f *scanner.FieldInfo) *spec.Schema {
+	// The config's word comes first: a registered type renders as configured.
+	configured := configuredType(f.QualifiedType, f.Type) != nil
+
+	// An enum — inline unless enums are referenced.
+	if enumInfo := g.findEnumInfo(f.Type); enumInfo != nil && !configured {
+		if g.config.EnumRefs {
+			g.markSchemaAsReferenced(enumInfo.TypeName)
+			return &spec.Schema{Ref: "#/components/schemas/" + enumInfo.TypeName}
+		}
+		schema := g.createInlineEnumSchema(enumInfo)
+		if f.Example != "" && !f.IsArray {
+			schema.Examples = []any{castToSchemaType(f.Example, schema.Type)}
+		}
+		return schema
+	}
+
+	// A model, or a schema the config names: by reference, so the parameter
+	// carries the pattern and description written for the type once.
+	if !configured {
+		if name, ok := g.resolveModelRef(f.Type); ok {
+			g.markSchemaAsReferenced(name)
+			return &spec.Schema{Ref: "#/components/schemas/" + name}
+		}
+	}
+
+	schema := &spec.Schema{}
+	g.setSchemaType(schema, f.Type, f.QualifiedType)
+	if f.IsArray {
+		// The slice's own rules are applied to the array; a scalar's here.
+		return schema
+	}
+	g.applyValidations(schema, f)
+	if f.Example != "" {
+		schema.Examples = []any{castToSchemaType(f.Example, schema.Type)}
+	}
+	if f.Default != "" {
+		schema.Default = castToSchemaType(f.Default, schema.Type)
+	}
+	return schema
 }
 
 // applyValidations applies validation rules to a schema: the directives the
