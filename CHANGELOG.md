@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/kausys/apikit/compare/v0.10.0...v0.10.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **openapi:** document a parameter's type as a field's, and a slice as an array ([#53](https://github.com/kausys/apikit/issues/53)) ([ebf4635](https://github.com/kausys/apikit/commit/ebf46356a46d818b919de7fe8624197da4d38d27))
+
 ## [0.10.0](https://github.com/kausys/apikit/compare/v0.9.4...v0.10.0) (2026-10-11)
 
 
