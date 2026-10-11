@@ -38,7 +38,7 @@ type Operation struct {
 	Callbacks map[string]*Callback `json:"callbacks,omitempty" yaml:"callbacks,omitempty"`
 	// Declares this operation to be deprecated. Consumers SHOULD refrain from usage of the declared
 	// operation. Default value is false.
-	Deprecated bool `json:"deprecated,omitempty" yaml:"deprecated,omitempty"`
+	Deprecated bool `json:"deprecated,omitzero" yaml:"deprecated,omitempty"`
 	// A declaration of which security mechanisms can be used for this operation. The list of values
 	// includes alternative Security Requirement Objects that can be used. Only one of the Security
 	// Requirement Objects need to be satisfied to authorize a request. To make security optional,

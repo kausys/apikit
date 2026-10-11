@@ -2,6 +2,8 @@
 // information from Go source code using structured comments (directives).
 package scanner
 
+import "go/ast"
+
 // MetaInfo contains OpenAPI specification metadata extracted from swagger:meta directive.
 type MetaInfo struct {
 	Title           string
@@ -145,6 +147,8 @@ type FieldInfo struct {
 	Required         bool
 	Nullable         bool
 	Validations      map[string]string
+	Rules            []string // The rules of the validate tag, as written
+	FormPart         bool     // Bound by a form tag: one part of a multipart body
 	Enum             string
 	Tags             map[string]string
 	IsArray          bool
@@ -172,11 +176,20 @@ type RouteInfo struct {
 	Deprecated        bool
 	Responses         []*ResponseInfo
 	Security          []string
+	SecurityScopes    map[string][]string // Scheme -> scopes it requires
 	Consumes          []string
 	Produces          []string
 	IgnoredParameters []string
 	SourceFile        string
 	Specs             []string // Multi-spec: which specs this route belongs to (empty = default spec)
+
+	// RequestType is the fully-qualified type of the request a route's
+	// function takes, when the route is declared on a handler —
+	// func(context.Context, Request, ...) — and empty otherwise. With no
+	// swagger:parameters struct for the operation, the parameters and the body
+	// are read from it: the same type, and the same tags, the generated
+	// handler binds.
+	RequestType string
 }
 
 // ResponseInfo contains information about an API response.
@@ -187,4 +200,16 @@ type ResponseInfo struct {
 	IsArray     bool
 	IsMap       bool
 	MapKeyType  string
+}
+
+// DeclaredStruct is a struct type as the source declares it, whether or not
+// a directive names it: what a request type, or a body type it refers to, is
+// read from.
+type DeclaredStruct struct {
+	Name    string
+	PkgPath string
+	File    string
+	Doc     *ast.CommentGroup
+	Type    *ast.StructType
+	Imports map[string]string
 }

@@ -60,13 +60,12 @@ func TestDeclaredTypeResolves(t *testing.T) {
 		"a model the scan never reached does not resolve — this is the case that degraded to type: string")
 }
 
-// The check reports; it must not change what gets generated. It stays a warning
-// until consumers have a release to clean up against, so a spec with an
-// unresolved reference still generates exactly as it did before.
-func TestCheckDeclaredSchemasResolveDoesNotFailGeneration(t *testing.T) {
-	g := createTestGenerator()
-	g.config.Strict = true
-	g.scanner.Routes["listKeys"] = &scanner.RouteInfo{
+// Under --strict an unresolved reference fails the run, naming the route; a
+// route documented as returning a model the document lacks is a spec that lies
+// to every client generated from it. Without --strict it is a warning, and the
+// spec generates as it did.
+func TestCheckDeclaredSchemasResolveFailsOnlyUnderStrict(t *testing.T) {
+	route := &scanner.RouteInfo{
 		Method:      "GET",
 		Path:        "/api-keys",
 		OperationID: "listKeys",
@@ -77,6 +76,15 @@ func TestCheckDeclaredSchemasResolveDoesNotFailGeneration(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, g.checkDeclaredSchemasResolve(),
-		"an unresolved reference is reported, not fatal")
+	lenient := createTestGenerator()
+	lenient.scanner.Routes["listKeys"] = route
+	require.NoError(t, lenient.checkDeclaredSchemasResolve(), "without --strict it is a warning")
+
+	strict := createTestGenerator()
+	strict.config.Strict = true
+	strict.scanner.Routes["listKeys"] = route
+	err := strict.checkDeclaredSchemasResolve()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GET /api-keys → 200: PaginatedAPIKeyResponse")
+	assert.NotContains(t, err.Error(), "when", "prose after a status is not a model reference")
 }

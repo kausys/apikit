@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kausys/apikit/cmd/openapi/cache"
 	"github.com/kausys/apikit/cmd/openapi/spec"
 	"github.com/kausys/apikit/cmd/scanner"
 
@@ -26,12 +25,11 @@ func createTestGenerator() *Generator {
 			Pattern:      "./...",
 			OutputFile:   "",
 			OutputFormat: "yaml",
-			UseCache:     false,
 			CleanUnused:  false,
 		},
-		cache:             cache.NewManager("."),
 		scanner:           s,
 		referencedSchemas: make(map[string]bool),
+		warnedTypes:       make(map[string]bool),
 	}
 }
 

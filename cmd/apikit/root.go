@@ -18,8 +18,6 @@ var rootCmd = &cobra.Command{
 Commands:
   handler gen   — Generate HTTP handler wrappers from annotated Go functions
   openapi gen   — Generate OpenAPI 3.1 specifications from Go source code
-  openapi clean — Clean the OpenAPI cache
-  openapi status — Show OpenAPI cache status
   swagger       — Manage Swagger UI assets
   sdk gen       — Generate Go SDK from an OpenAPI specification
 

@@ -1,7 +1,7 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
 
 	"go.yaml.in/yaml/v3"
@@ -53,7 +53,7 @@ func (r *Responses) MarshalJSON() ([]byte, error) {
 		result["default"] = r.Default
 	}
 
-	return json.Marshal(result)
+	return json.Marshal(result, json.Deterministic(true))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.

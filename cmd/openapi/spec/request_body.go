@@ -12,5 +12,5 @@ type RequestBody struct {
 	// applicable. e.g. "text/plain" overrides "text/*"
 	Content map[string]*MediaType `json:"content" yaml:"content"`
 	// Determines if the request body is required in the request. Defaults to false.
-	Required bool `json:"required,omitempty" yaml:"required,omitempty"`
+	Required bool `json:"required,omitzero" yaml:"required,omitempty"`
 }

@@ -13,11 +13,11 @@ type Config struct {
 	OutputFile string
 	// OutputFormat is the output format: "yaml" or "json"
 	OutputFormat string
-	// UseCache enables incremental build caching
-	UseCache bool
-	// Flatten inlines $ref schemas instead of using references
-	Flatten bool
-	// Validate enables spec validation after generation
+	// Check writes nothing: generation fails when a file on disk is not what
+	// the source generates.
+	Check bool
+	// Validate makes a problem the validation of the generated documents
+	// finds fatal; without it the problems are warnings. Strict implies it.
 	Validate bool
 	// CleanUnused removes schemas that are declared but not referenced
 	CleanUnused bool
@@ -63,17 +63,26 @@ func WithOutput(file, format string) Option {
 	}
 }
 
-// WithCache enables or disables caching.
-func WithCache(enabled bool) Option {
-	return func(c *Config) {
-		c.UseCache = enabled
-	}
+// WithCache does nothing. The cache it enabled was written on every run and
+// never read: a full scan is what produced every spec either way.
+//
+// Deprecated: there is no cache.
+func WithCache(bool) Option {
+	return func(*Config) {}
 }
 
-// WithFlatten enables or disables schema flattening.
-func WithFlatten(flatten bool) Option {
+// WithFlatten does nothing; it never did.
+//
+// Deprecated: schemas are always referenced, not inlined.
+func WithFlatten(bool) Option {
+	return func(*Config) {}
+}
+
+// WithCheck makes generation write nothing and fail when a file on disk is
+// not what the source generates — for CI.
+func WithCheck(check bool) Option {
 	return func(c *Config) {
-		c.Flatten = flatten
+		c.Check = check
 	}
 }
 
@@ -115,14 +124,15 @@ func WithEnumRefs(enumRefs bool) Option {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Dir:          ".",
-		Pattern:      "./...",
-		IgnorePaths:  []string{},
-		OutputFile:   "openapi.yaml",
+		Dir:         ".",
+		Pattern:     "./...",
+		IgnorePaths: []string{},
+		// Nothing is written unless asked for: a relative default landed in
+		// whatever directory the caller ran from — the package directory, for
+		// a test.
+		OutputFile:   "",
 		OutputFormat: "yaml",
-		UseCache:     true,
-		Flatten:      false,
-		Validate:     true,
+		Validate:     false,
 		CleanUnused:  true,
 	}
 }

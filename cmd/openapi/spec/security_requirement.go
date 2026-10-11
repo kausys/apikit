@@ -1,7 +1,7 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -37,7 +37,7 @@ func (s *SecurityRequirement) MarshalJSON() ([]byte, error) {
 	if s == nil || s.Requirements == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(s.Requirements)
+	return json.Marshal(s.Requirements, json.Deterministic(true))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.

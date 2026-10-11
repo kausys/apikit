@@ -21,17 +21,12 @@
 //   - swagger:parameters - Parameter definitions
 //   - swagger:enum - Enum definitions
 //
-// # Caching
+// # Parameters from handlers
 //
-// The library supports incremental builds through caching. By default, parsed
-// schemas and routes are cached in a .openapi directory. Only files that have
-// changed since the last build are re-parsed.
-//
-// To disable caching:
-//
-//	spec, err := openapi.Generate(
-//		openapi.WithCache(false),
-//	)
+// A swagger:route declared on a handler — func(context.Context, Request, ...) —
+// needs no swagger:parameters struct: its parameters and its body are read from
+// the request type, with the binding tags the generated wrapper reads (path,
+// query, header, cookie, form, and the field tagged json:"body").
 package openapi
 
 import (
@@ -62,14 +57,26 @@ var WithIgnorePaths = generator.WithIgnorePaths
 // WithOutput sets the output file path and format ("yaml" or "json").
 var WithOutput = generator.WithOutput
 
-// WithCache enables or disables incremental caching.
-var WithCache = generator.WithCache
+// WithCache does nothing: there is no cache.
+//
+// Deprecated: every run scans the source.
+var WithCache = generator.WithCache //nolint:staticcheck // SA1019: kept so existing callers compile
 
-// WithFlatten enables or disables schema flattening (inlining $refs).
-var WithFlatten = generator.WithFlatten
+// WithFlatten does nothing; it never did.
+//
+// Deprecated: schemas are always referenced.
+var WithFlatten = generator.WithFlatten //nolint:staticcheck // SA1019: kept so existing callers compile
 
-// WithValidation enables or disables spec validation after generation.
+// WithValidation makes a problem in the generated document fatal.
 var WithValidation = generator.WithValidation
+
+// WithStrict makes every silent loss fatal: dropped routes, unresolved
+// response types, an invalid document.
+var WithStrict = generator.WithStrict
+
+// WithCheck writes nothing and fails when a file on disk is not what the
+// source generates.
+var WithCheck = generator.WithCheck
 
 // WithCleanUnused enables or disables removal of unreferenced schemas.
 var WithCleanUnused = generator.WithCleanUnused

@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"log"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -80,9 +81,16 @@ type Scanner struct {
 	StructSources map[string]string // struct name -> source file
 	RouteSources  map[string]string // operation ID -> source file
 
+	// Declared indexes every struct type the scan saw, by fully-qualified
+	// name, directive or not.
+	Declared map[string]*DeclaredStruct
+
 	// Type info for resolving embedded types
 	typeInfo map[string]types.Object // Fully qualified type name -> types.Object
 	pkgInfo  map[*ast.File]*packages.Package
+
+	// requestStructs caches the request structs built from Declared.
+	requestStructs map[string]*StructInfo
 }
 
 // New creates a new Scanner with the given options.
@@ -98,21 +106,23 @@ func New(options ...Option) *Scanner {
 	}
 
 	return &Scanner{
-		config:        config,
-		fset:          token.NewFileSet(),
-		Meta:          nil, // Will be set to first general meta
-		Metas:         []*MetaInfo{},
-		Enums:         make(map[string]*EnumInfo),
-		Structs:       make(map[string]*StructInfo),
-		Routes:        make(map[string]*RouteInfo),
-		TypeToEnum:    make(map[string]string),
-		TypeToStruct:  make(map[string]string),
-		TypeAliases:   make(map[string]string),
-		EnumSources:   make(map[string]string),
-		StructSources: make(map[string]string),
-		RouteSources:  make(map[string]string),
-		typeInfo:      make(map[string]types.Object),
-		pkgInfo:       make(map[*ast.File]*packages.Package),
+		config:         config,
+		fset:           token.NewFileSet(),
+		Meta:           nil, // Will be set to first general meta
+		Metas:          []*MetaInfo{},
+		Enums:          make(map[string]*EnumInfo),
+		Structs:        make(map[string]*StructInfo),
+		Routes:         make(map[string]*RouteInfo),
+		TypeToEnum:     make(map[string]string),
+		TypeToStruct:   make(map[string]string),
+		TypeAliases:    make(map[string]string),
+		EnumSources:    make(map[string]string),
+		StructSources:  make(map[string]string),
+		RouteSources:   make(map[string]string),
+		Declared:       make(map[string]*DeclaredStruct),
+		typeInfo:       make(map[string]types.Object),
+		pkgInfo:        make(map[*ast.File]*packages.Package),
+		requestStructs: make(map[string]*StructInfo),
 	}
 }
 
@@ -173,7 +183,7 @@ func (s *Scanner) Scan() error {
 			}
 			filePath := pkg.GoFiles[i]
 
-			if shouldIgnorePath(filePath, s.config.IgnorePaths) {
+			if shouldIgnorePath(s.relativeToDir(filePath), s.config.IgnorePaths) {
 				excluded++
 				continue
 			}
@@ -210,9 +220,8 @@ func (s *Scanner) Scan() error {
 		return fmt.Errorf(
 			"--ignore excluded every file under %q (%d excluded, 0 scanned), so there "+
 				"is nothing to generate from: %s\n  a pattern matches whole path segments "+
-				"of BOTH the package import path and each absolute file path, so one "+
-				"naming a directory anywhere above the module also matches everything "+
-				"inside it",
+				"of the package import path and of each file path relative to the "+
+				"scanned directory",
 			s.config.Pattern, excluded, strings.Join(s.config.IgnorePaths, ", "))
 	}
 
@@ -238,11 +247,26 @@ func (s *Scanner) packageIgnored(pkg *packages.Package) bool {
 		return false
 	}
 	for _, filePath := range pkg.GoFiles {
-		if !shouldIgnorePath(filePath, s.config.IgnorePaths) {
+		if !shouldIgnorePath(s.relativeToDir(filePath), s.config.IgnorePaths) {
 			return false
 		}
 	}
 	return true
+}
+
+// relativeToDir returns a file path relative to the scanned directory, which
+// is what an ignore pattern is matched against. A file outside it keeps its
+// path.
+func (s *Scanner) relativeToDir(filePath string) string {
+	dir, err := filepath.Abs(s.config.Dir)
+	if err != nil {
+		return filePath
+	}
+	rel, err := filepath.Rel(dir, filePath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filePath
+	}
+	return rel
 }
 
 // collectTypeInfo collects type information from a package.
@@ -309,13 +333,15 @@ func (s *Scanner) processFile(filePath string, file *ast.File, pkg *packages.Pac
 	// Process type aliases (for enum resolution)
 	s.processTypeAliases(filePath, file, pkg)
 
-	// Process schemas (models and parameters)
+	// Index every struct the file declares, then process schemas (models
+	// and parameters)
+	s.indexDeclared(filePath, file, pkg)
 	if err := s.processSchemas(filePath, file); err != nil {
 		return err
 	}
 
 	// Process routes
-	if err := s.processRoutes(filePath, file); err != nil {
+	if err := s.processRoutes(filePath, file, pkg); err != nil {
 		return err
 	}
 

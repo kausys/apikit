@@ -1,13 +1,18 @@
 package scanner
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
+	"log"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // processRoutes processes swagger:route directives.
-func (s *Scanner) processRoutes(filePath string, file *ast.File) error {
+func (s *Scanner) processRoutes(filePath string, file *ast.File, pkg *packages.Package) error {
+	imports := extractFileImports(file)
 	for _, decl := range file.Decls {
 		funcDecl, ok := decl.(*ast.FuncDecl)
 		if !ok || funcDecl.Doc == nil {
@@ -21,7 +26,15 @@ func (s *Scanner) processRoutes(filePath string, file *ast.File) error {
 		routeValue := extractDirectiveValue(funcDecl.Doc, RouteDirective)
 		method, path, tags, operationID := parseRouteDirective(routeValue)
 
+		// A directive that does not parse used to drop its route without a
+		// word: the endpoint vanished from the spec and the run succeeded.
 		if method == "" || path == "" || operationID == "" {
+			msg := fmt.Sprintf("%s: swagger:route %q is not METHOD /path [tags...] operationID; the route is left out",
+				s.fset.Position(funcDecl.Pos()), routeValue)
+			if s.config.Strict {
+				return errors.New(msg)
+			}
+			log.Printf("warning: %s", msg)
 			continue
 		}
 
@@ -40,6 +53,7 @@ func (s *Scanner) processRoutes(filePath string, file *ast.File) error {
 			IgnoredParameters: []string{},
 			SourceFile:        filePath,
 			Specs:             extractSpecs(funcDecl.Doc),
+			RequestType:       handlerRequestType(funcDecl, pkg, imports),
 		}
 
 		extractResponses(route, funcDecl.Doc)
@@ -72,6 +86,37 @@ func (s *Scanner) processRoutes(filePath string, file *ast.File) error {
 		s.RouteSources[operationID] = filePath
 	}
 	return nil
+}
+
+// handlerRequestType returns the fully-qualified type of the request a
+// handler takes — the second parameter of func(context.Context, Request, ...)
+// — or "" when the function is not shaped like one.
+func handlerRequestType(fn *ast.FuncDecl, pkg *packages.Package, imports map[string]string) string {
+	params := fn.Type.Params
+	if params == nil || len(params.List) < 2 {
+		return ""
+	}
+	if extractTypeName(params.List[0].Type) != "context.Context" || len(params.List[0].Names) > 1 {
+		return ""
+	}
+	expr := params.List[1].Type
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	switch t := expr.(type) {
+	case *ast.Ident:
+		if pkg == nil {
+			return ""
+		}
+		return pkg.PkgPath + "." + t.Name
+	case *ast.SelectorExpr:
+		if x, ok := t.X.(*ast.Ident); ok {
+			if path, ok := imports[x.Name]; ok {
+				return path + "." + t.Sel.Name
+			}
+		}
+	}
+	return ""
 }
 
 // parseRouteDirective parses: METHOD /path tag1 tag2 operationID
@@ -207,21 +252,44 @@ func extractRouteDescription(doc *ast.CommentGroup) string {
 	return strings.TrimSpace(strings.Join(descriptionLines, "\n"))
 }
 
-// extractResponses parses the Responses: section.
+// extractResponses parses the Responses: section. A line is "- 200: Type",
+// or "200: Type" without the dash, the form go-swagger writes: lines without
+// it used to be skipped, and a route documented that way had no responses.
 func extractResponses(route *RouteInfo, doc *ast.CommentGroup) {
 	lines := extractSectionLines(doc, ResponsesDirective)
 	for _, line := range lines {
-		if !strings.HasPrefix(line, DashPrefix) {
+		line = strings.TrimSpace(strings.TrimPrefix(line, DashPrefix))
+		if !startsWithStatus(line) {
 			continue
 		}
-		line = strings.TrimPrefix(line, DashPrefix)
-		line = strings.TrimSpace(line)
 
 		resp := parseResponseLine(line)
 		if resp != nil {
 			route.Responses = append(route.Responses, resp)
 		}
 	}
+}
+
+// startsWithStatus reports whether a line starts with a response key: a
+// status code (200, 4XX) or "default", then a colon.
+func startsWithStatus(line string) bool {
+	key, _, ok := strings.Cut(line, ":")
+	if !ok {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	if key == "default" {
+		return true
+	}
+	if len(key) != 3 || key[0] < '1' || key[0] > '5' {
+		return false
+	}
+	for _, c := range key[1:] {
+		if (c < '0' || c > '9') && c != 'X' && c != 'x' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseResponseLine parses a single response line.
@@ -282,14 +350,25 @@ func parseResponseLine(line string) *ResponseInfo {
 	return resp
 }
 
-// extractSecurity parses the Security: section.
+// extractSecurity parses the Security: section: one scheme per line, with
+// the scopes it requires after a colon — "- oauth: users.read, users.write".
+// The scopes used to stay part of the name, so the requirement named a scheme
+// that does not exist.
 func extractSecurity(route *RouteInfo, doc *ast.CommentGroup) {
 	lines := extractSectionLines(doc, SecurityDirective)
 	for _, line := range lines {
 		if after, found := strings.CutPrefix(line, DashPrefix); found {
-			scheme := strings.TrimSpace(after)
-			if scheme != "" {
-				route.Security = append(route.Security, scheme)
+			scheme, scopes, _ := strings.Cut(strings.TrimSpace(after), ":")
+			scheme = strings.TrimSpace(scheme)
+			if scheme == "" {
+				continue
+			}
+			route.Security = append(route.Security, scheme)
+			for scope := range strings.FieldsFuncSeq(scopes, func(r rune) bool { return r == ',' || r == ' ' }) {
+				if route.SecurityScopes == nil {
+					route.SecurityScopes = make(map[string][]string)
+				}
+				route.SecurityScopes[scheme] = append(route.SecurityScopes[scheme], scope)
 			}
 		}
 	}

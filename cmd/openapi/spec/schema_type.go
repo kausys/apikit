@@ -1,7 +1,7 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"slices"
 
 	"go.yaml.in/yaml/v3"

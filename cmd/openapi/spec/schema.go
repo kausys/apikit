@@ -41,7 +41,7 @@ type Schema struct {
 	// The maximum length for a string.
 	MaxLength *uint64 `json:"maxLength,omitempty" yaml:"maxLength,omitempty"`
 	// The minimum length for a string.
-	MinLength uint64 `json:"minLength,omitempty" yaml:"minLength,omitempty"`
+	MinLength uint64 `json:"minLength,omitzero" yaml:"minLength,omitempty"`
 	// A regular expression that a string value must match. This string SHOULD be a valid regular
 	// expression, according to the Ecma-262 Edition 5.1 regular expression dialect.
 	Pattern string `json:"pattern,omitempty" yaml:"pattern,omitempty"`
@@ -50,7 +50,7 @@ type Schema struct {
 	// The minimum number of items in an array.
 	MinItems *uint64 `json:"minItems,omitempty" yaml:"minItems,omitempty"`
 	// Indicates whether items in an array must be unique.
-	UniqueItems bool `json:"uniqueItems,omitempty" yaml:"uniqueItems,omitempty"`
+	UniqueItems bool `json:"uniqueItems,omitzero" yaml:"uniqueItems,omitempty"`
 	// The maximum number of properties in an object.
 	MaxProperties *uint64 `json:"maxProperties,omitempty" yaml:"maxProperties,omitempty"`
 	// The minimum number of properties in an object.
@@ -126,9 +126,9 @@ type Schema struct {
 	// a payload is expected to satisfy. See Composition and Inheritance for more details.
 	Discriminator *Discriminator `json:"discriminator,omitempty" yaml:"discriminator,omitempty"`
 	// Relevant only for Schema Object properties definitions. Declares the property as "read only".
-	ReadOnly bool `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
+	ReadOnly bool `json:"readOnly,omitzero" yaml:"readOnly,omitempty"`
 	// Relevant only for Schema Object properties definitions. Declares the property as "write only".
-	WriteOnly bool `json:"writeOnly,omitempty" yaml:"writeOnly,omitempty"`
+	WriteOnly bool `json:"writeOnly,omitzero" yaml:"writeOnly,omitempty"`
 	// This MAY be used only on property schemas. It has no effect on root schemas. Adds additional
 	// metadata to describe the XML representation of this property.
 	XML *XML `json:"xml,omitempty" yaml:"xml,omitempty"`
@@ -136,5 +136,5 @@ type Schema struct {
 	ExternalDocs *ExternalDocs `json:"externalDocs,omitempty" yaml:"externalDocs,omitempty"`
 	// Specifies that a schema is deprecated and SHOULD be transitioned out of usage. Default value is
 	// false.
-	Deprecated bool `json:"deprecated,omitempty" yaml:"deprecated,omitempty"`
+	Deprecated bool `json:"deprecated,omitzero" yaml:"deprecated,omitempty"`
 }
