@@ -1,10 +1,10 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"slices"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // SchemaType represents the JSON Schema "type" keyword which can be either a single string

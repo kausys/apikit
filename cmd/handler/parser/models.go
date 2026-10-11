@@ -19,6 +19,12 @@ type Handler struct {
 	// ParamType is the type of the request parameter
 	ParamType string
 
+	// ParamImport is the import path of the payload's package when the
+	// payload is declared in another package, and ParamImportAlias the name
+	// the handler's file uses for it.
+	ParamImport      string
+	ParamImportAlias string
+
 	// ReturnType is the return type of the handler
 	ReturnType string
 
@@ -105,6 +111,10 @@ type ParseResult struct {
 
 	// Source information
 	Source Source
+
+	// Packages are the directories of every package a struct was read from
+	// while parsing the file, its own included: what the wrapper depends on.
+	Packages []string
 
 	// Warnings are advisory: the wrapper generated alongside them is still correct.
 	Warnings []string

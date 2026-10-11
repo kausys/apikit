@@ -4,11 +4,12 @@ package swagger
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/json"
-	"io"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
 	"io/fs"
 	"net/http"
-	"path"
+	"net/url"
 	"strings"
 )
 
@@ -38,8 +39,14 @@ type Config struct {
 	// Specs is the ordered list of spec name/content pairs. The Swagger UI
 	// dropdown lists them in this order.
 	Specs []Spec
-	// DefaultSpec is the name of the default spec to serve when no query param is provided
+	// DefaultSpec is the name of the spec the UI opens on, and the one served
+	// when no query param is provided
 	DefaultSpec string
+	// BundledInitializer serves the swagger-initializer.js inside the zip
+	// instead of the one the handler writes from this Config. Set it only for
+	// a zip built with an initializer of its own: the written one is what
+	// keeps SpecPath, the spec list and DefaultSpec in step with the UI.
+	BundledInitializer bool
 }
 
 // Handler serves Swagger UI and OpenAPI specifications.
@@ -47,8 +54,12 @@ type Handler struct {
 	config        Config
 	swaggerUI     fs.FS
 	resourcesJSON []byte
+	initializer   []byte
 	specsByName   map[string][]byte
 }
+
+// initializerFile is the file Swagger UI's index.html loads to start itself.
+const initializerFile = "swagger-initializer.js"
 
 // New creates a new Swagger UI handler with the given configuration.
 // swaggerUIZip should be the bytes of the swagger-ui.zip file.
@@ -73,14 +84,22 @@ func New(swaggerUIZip []byte, config Config) (*Handler, error) {
 	specsByName := make(map[string][]byte, len(config.Specs))
 	resources := make([]Resource, 0, len(config.Specs))
 	for _, s := range config.Specs {
+		if _, dup := specsByName[s.Name]; dup {
+			return nil, fmt.Errorf("swagger: spec %q is listed twice", s.Name)
+		}
 		specsByName[s.Name] = s.Data
 		resources = append(resources, Resource{
 			Name: s.Name,
-			URL:  config.SpecPath + "?spec=" + s.Name,
+			URL:  config.SpecPath + "?spec=" + url.QueryEscape(s.Name),
 		})
 	}
 
-	resourcesJSON, err := json.Marshal(resources)
+	resourcesJSON, err := json.Marshal(resources, jsontext.EscapeForHTML(true))
+	if err != nil {
+		return nil, err
+	}
+
+	initializer, err := writeInitializer(resourcesJSON, config)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +108,42 @@ func New(swaggerUIZip []byte, config Config) (*Handler, error) {
 		config:        config,
 		swaggerUI:     zipReader,
 		resourcesJSON: resourcesJSON,
+		initializer:   initializer,
 		specsByName:   specsByName,
 	}, nil
+}
+
+// writeInitializer writes the script that starts Swagger UI over the specs this
+// handler serves. Every value is JSON-encoded with <, > and & escaped, so a
+// spec name cannot end the script.
+//
+// It lists the specs itself rather than fetching ResourcesPath, and reads
+// nothing from the page URL: an initializer that took the spec location from a
+// query parameter would render a spec from anywhere under this origin.
+func writeInitializer(resourcesJSON []byte, config Config) ([]byte, error) {
+	primary, err := json.Marshal(config.DefaultSpec, jsontext.EscapeForHTML(true))
+	if err != nil {
+		return nil, err
+	}
+	return fmt.Appendf(nil, `window.onload = function () {
+  window.ui = SwaggerUIBundle({
+    urls: %s,
+    "urls.primaryName": %s,
+    dom_id: "#swagger-ui",
+    presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+    plugins: [SwaggerUIBundle.plugins.DownloadUrl],
+    layout: "StandaloneLayout",
+    docExpansion: "none",
+    deepLinking: true,
+    operationsSorter: "alpha",
+    tagsSorter: function (a, b) {
+      if (a === "Authentication") return -1;
+      if (b === "Authentication") return 1;
+      return a.localeCompare(b);
+    },
+  });
+};
+`, resourcesJSON, primary), nil
 }
 
 // ServeHTTP implements http.Handler.
@@ -129,12 +182,7 @@ func (h *Handler) ServeUI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filePath := strings.TrimPrefix(r.URL.Path, "/")
-	if filePath == "" {
-		filePath = "index.html"
-	}
-
-	h.serveFile(w, filePath)
+	h.serveFile(w, r, strings.TrimPrefix(r.URL.Path, "/"))
 }
 
 // Routes registers the handler routes on the given mux.
@@ -157,40 +205,30 @@ func (h *Handler) ServeResources(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	// Strip the base path prefix
 	filePath := strings.TrimPrefix(r.URL.Path, h.config.BasePath)
-	filePath = strings.TrimPrefix(filePath, "/")
+	h.serveFile(w, r, strings.TrimPrefix(filePath, "/"))
+}
+
+// serveFile serves one file of the Swagger UI bundle. http.ServeFileFS sets the
+// content type, answers HEAD, ranges and conditional requests from the zip
+// entry's modification time, and refuses a path that leaves the bundle.
+func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, filePath string) {
 	if filePath == "" {
 		filePath = "index.html"
 	}
-
-	h.serveFile(w, filePath)
-}
-
-func (h *Handler) serveFile(w http.ResponseWriter, filePath string) {
-	file, err := h.swaggerUI.Open(filePath)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+	if filePath == initializerFile && !h.config.BundledInitializer {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(h.initializer)
 		return
 	}
-	defer func() { _ = file.Close() }()
-
-	// Set content type based on extension
-	ext := path.Ext(filePath)
-	switch ext {
-	case ".html":
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	case ".js":
-		w.Header().Set("Content-Type", "application/javascript")
-	case ".css":
-		w.Header().Set("Content-Type", "text/css")
-	case ".png":
-		w.Header().Set("Content-Type", "image/png")
-	case ".svg":
-		w.Header().Set("Content-Type", "image/svg+xml")
-	case ".json":
-		w.Header().Set("Content-Type", "application/json")
+	if !fs.ValidPath(filePath) {
+		http.NotFound(w, r)
+		return
 	}
-
-	_, _ = io.Copy(w, file)
+	if info, err := fs.Stat(h.swaggerUI, filePath); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFileFS(w, r, h.swaggerUI, filePath) //nolint:gosec // G703: a valid path inside the embedded zip, checked above
 }
 
 func (h *Handler) serveSpec(w http.ResponseWriter, r *http.Request) {
@@ -210,8 +248,17 @@ func (h *Handler) serveSpec(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Type", specContentType(spec))
 	_, _ = w.Write(spec)
+}
+
+// specContentType tells a JSON document from a YAML one by its first
+// significant byte.
+func specContentType(spec []byte) string {
+	if trimmed := bytes.TrimSpace(spec); len(trimmed) > 0 && trimmed[0] == '{' {
+		return "application/json"
+	}
+	return "application/yaml"
 }
 
 func (h *Handler) serveResources(w http.ResponseWriter, r *http.Request) {

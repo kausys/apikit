@@ -3,6 +3,7 @@ package scanner
 import (
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strings"
 )
 
@@ -281,13 +282,14 @@ func processStructFields(structInfo *StructInfo, structType *ast.StructType, imp
 			continue
 		}
 
-		fieldInfo := parseField(field, imports)
-		if fieldInfo != nil {
+		// One declaration may name several fields (A, B string); each is a
+		// field of its own. Only the first used to be kept.
+		for _, fieldInfo := range parseFields(field, imports) {
 			// Multiply by 1000 to leave room for embedded field sub-indices
 			fieldInfo.Index = index * 1000
 			structInfo.Fields = append(structInfo.Fields, fieldInfo)
+			index++
 		}
-		index++
 	}
 }
 
@@ -324,15 +326,21 @@ func extractTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// parseField parses a single struct field.
-func parseField(field *ast.Field, imports map[string]string) *FieldInfo {
-	// Skip fields without names (embedded)
-	if len(field.Names) == 0 {
-		return nil
+// parseFields parses the fields one declaration names.
+func parseFields(field *ast.Field, imports map[string]string) []*FieldInfo {
+	var fields []*FieldInfo
+	for _, name := range field.Names {
+		if f := parseField(field, name.Name, imports); f != nil {
+			fields = append(fields, f)
+		}
 	}
+	return fields
+}
 
+// parseField parses a single struct field.
+func parseField(field *ast.Field, name string, imports map[string]string) *FieldInfo {
 	// Skip unexported fields
-	if !ast.IsExported(field.Names[0].Name) {
+	if !ast.IsExported(name) {
 		return nil
 	}
 
@@ -342,7 +350,7 @@ func parseField(field *ast.Field, imports map[string]string) *FieldInfo {
 	}
 
 	fieldInfo := &FieldInfo{
-		Name:        field.Names[0].Name,
+		Name:        name,
 		Tags:        make(map[string]string),
 		Validations: make(map[string]string),
 	}
@@ -352,15 +360,17 @@ func parseField(field *ast.Field, imports map[string]string) *FieldInfo {
 
 	// Parse struct tags
 	if field.Tag != nil {
-		parseFieldTags(fieldInfo, field.Tag.Value)
+		if !parseFieldTags(fieldInfo, field.Tag.Value) {
+			return nil
+		}
 	}
 
-	// Parse field doc comments
+	// Parse field doc comments, then the trailing comment: a directive in
+	// either applies, and the trailing comment describes the field only when
+	// the doc comment does not.
 	if field.Doc != nil {
 		parseFieldDoc(fieldInfo, field.Doc)
 	}
-
-	// Also check inline comments
 	if field.Comment != nil {
 		parseFieldDoc(fieldInfo, field.Comment)
 	}
@@ -427,92 +437,97 @@ func processInlineStruct(name string, structType *ast.StructType, imports map[st
 			continue
 		}
 
-		fieldInfo := parseField(field, imports)
-		if fieldInfo != nil {
-			structInfo.Fields = append(structInfo.Fields, fieldInfo)
-		}
+		structInfo.Fields = append(structInfo.Fields, parseFields(field, imports)...)
 	}
 
 	return structInfo
 }
 
-// parseFieldTags parses struct tags (json, yaml, validate, etc.).
-func parseFieldTags(fieldInfo *FieldInfo, tagValue string) {
-	// Remove backticks
-	tagValue = strings.Trim(tagValue, "`")
+// bindingTags are the tags a generated handler binds a request field from,
+// in the order it looks for them. The spec reads the same ones, so a
+// documented parameter is the one the handler reads.
+var bindingTags = []string{"path", "query", "header", "cookie", "form"}
+
+// parseFieldTags parses struct tags (json, yaml, validate, binding tags). It
+// reports false for a field the wire never carries: json:"-" with no binding.
+func parseFieldTags(fieldInfo *FieldInfo, tagValue string) bool {
+	tag := reflect.StructTag(strings.Trim(tagValue, "`"))
+
+	// A binding tag says where a request field comes from and under what name.
+	for _, source := range bindingTags {
+		if value, ok := tag.Lookup(source); ok {
+			name, _, _ := strings.Cut(value, ",")
+			fieldInfo.In = source
+			if name != "" {
+				fieldInfo.Tags[source] = name
+			}
+			// A form tag names one part of a multipart body. (The "in: form"
+			// directive, by contrast, marks a struct as the whole body.)
+			fieldInfo.FormPart = source == "form"
+			break
+		}
+	}
 
 	// Parse json tag
-	if jsonTag := getTagValue(tagValue, "json"); jsonTag != "" {
-		parts := strings.Split(jsonTag, ",")
-		if len(parts) > 0 && parts[0] != "-" {
-			fieldInfo.Tags["json"] = parts[0]
+	if jsonTag, ok := tag.Lookup("json"); ok {
+		name, opts, _ := strings.Cut(jsonTag, ",")
+		if name == "-" && opts == "" && fieldInfo.In == "" {
+			return false
 		}
-		for _, opt := range parts[1:] {
+		if name != "" && name != "-" {
+			fieldInfo.Tags["json"] = name
+		}
+		for opt := range strings.SplitSeq(opts, ",") {
 			if opt == "omitempty" || opt == "omitzero" {
 				fieldInfo.HasOmitempty = true
 			}
 		}
+		// The field a generated handler decodes the body into.
+		if name == "body" && fieldInfo.In == "" {
+			fieldInfo.In = "body"
+			fieldInfo.IsRequestBody = true
+		}
 	}
 
 	// Parse yaml tag
-	if yamlTag := getTagValue(tagValue, "yaml"); yamlTag != "" {
-		parts := strings.Split(yamlTag, ",")
-		if len(parts) > 0 && parts[0] != "-" {
-			fieldInfo.Tags["yaml"] = parts[0]
+	if yamlTag := tag.Get("yaml"); yamlTag != "" {
+		name, _, _ := strings.Cut(yamlTag, ",")
+		if name != "" && name != "-" {
+			fieldInfo.Tags["yaml"] = name
 		}
 	}
 
 	// Parse example tag
-	if example := getTagValue(tagValue, "example"); example != "" {
+	if example := tag.Get("example"); example != "" {
 		fieldInfo.Example = example
 	}
 
 	// Parse default tag
-	if def := getTagValue(tagValue, "default"); def != "" {
+	if def := tag.Get("default"); def != "" {
 		fieldInfo.Default = def
 	}
 
 	// Parse validate tag for validations
-	if validate := getTagValue(tagValue, "validate"); validate != "" {
+	if validate := tag.Get("validate"); validate != "" {
 		parseValidateTag(fieldInfo, validate)
 	}
+	return true
 }
 
-// getTagValue extracts the value for a specific tag key.
-func getTagValue(tagValue, key string) string {
-	// Look for key:"value" pattern
-	keyPattern := key + `:"([^"]*)"`
-	re := getCompiledRegex(keyPattern)
-	matches := re.FindStringSubmatch(tagValue)
-	if len(matches) >= 2 {
-		return matches[1]
-	}
-	return ""
-}
-
-// parseValidateTag parses validation rules from the validate tag.
+// parseValidateTag records the rules of a validate tag. Which keyword a rule
+// becomes depends on the schema it lands on — min is a minimum for a number,
+// a minLength for a string, a minItems for an array — so the generator maps
+// them once the type is known.
 func parseValidateTag(fieldInfo *FieldInfo, validate string) {
-	rules := strings.SplitSeq(validate, ",")
-	for rule := range rules {
+	for rule := range strings.SplitSeq(validate, ",") {
 		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+		fieldInfo.Rules = append(fieldInfo.Rules, rule)
 		if rule == "required" {
 			fieldInfo.Required = true
 			fieldInfo.ExplicitRequired = true
-		} else if v, ok := strings.CutPrefix(rule, "min="); ok {
-			fieldInfo.Validations["min"] = v
-		} else if v, ok := strings.CutPrefix(rule, "max="); ok {
-			fieldInfo.Validations["max"] = v
-		} else if v, ok := strings.CutPrefix(rule, "len="); ok {
-			fieldInfo.Validations["len"] = v
-		} else {
-			switch rule {
-			case "email":
-				fieldInfo.Validations["format"] = "email"
-			case "uuid":
-				fieldInfo.Validations["format"] = "uuid"
-			case "url":
-				fieldInfo.Validations["format"] = "uri"
-			}
 		}
 	}
 }
@@ -555,9 +570,14 @@ func parseFieldDoc(fieldInfo *FieldInfo, doc *ast.CommentGroup) {
 
 	comments := trimComments(doc)
 
-	// Extract single-line directive values
-	fieldInfo.Example = extractDirectiveValue(doc, ExampleDirective)
-	fieldInfo.Default = extractDirectiveValue(doc, DefaultDirective)
+	// Extract single-line directive values. A directive overrides the tag;
+	// its absence leaves the tag's value alone.
+	if example := extractDirectiveValue(doc, ExampleDirective); example != "" {
+		fieldInfo.Example = example
+	}
+	if def := extractDirectiveValue(doc, DefaultDirective); def != "" {
+		fieldInfo.Default = def
+	}
 
 	// Handle required directive
 	if requiredValue := extractDirectiveValue(doc, RequiredDirective); requiredValue != "" {
@@ -634,8 +654,11 @@ func parseFieldDoc(fieldInfo *FieldInfo, doc *ast.CommentGroup) {
 		fieldInfo.Validations["writeOnly"] = "true"
 	}
 
-	// Extract description (non-directive lines)
-	fieldInfo.Description = extractFieldDescription(comments, knownFieldDirectives)
+	// Extract description (non-directive lines), unless an earlier comment
+	// already gave one.
+	if fieldInfo.Description == "" {
+		fieldInfo.Description = extractFieldDescription(comments, knownFieldDirectives)
+	}
 }
 
 // extractFieldDescription extracts description lines, excluding directives.

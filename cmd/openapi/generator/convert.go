@@ -1,7 +1,6 @@
 package generator
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -77,8 +76,8 @@ func (g *Generator) applyMeta(openAPI *spec.OpenAPI, meta, fallbackMeta *scanner
 // shortTypeName returns the unqualified type name.
 // For "dto.Agent" returns "Agent", for "Agent" returns "Agent".
 func shortTypeName(typeName string) string {
-	if idx := strings.LastIndex(typeName, "."); idx >= 0 {
-		return typeName[idx+1:]
+	if _, name, ok := strings.CutLast(typeName, "."); ok {
+		return name
 	}
 	return typeName
 }
@@ -342,7 +341,10 @@ func (g *Generator) setSchemaType(schema *spec.Schema, goType string, qualifiedT
 			}
 		}
 		if !isKnownGoType(goType) {
-			fmt.Printf("warning: unknown type %q — add it to .openapi.yaml schemas or register as a custom_type; falling back to string\n", goType)
+			if !g.warnedTypes[goType] {
+				g.warnedTypes[goType] = true
+				warn("unknown type %q — add it to .openapi.yaml schemas or register as a custom_type; falling back to string", goType)
+			}
 		}
 		schema.Type = spec.NewSchemaType(scanner.TypeString)
 	}

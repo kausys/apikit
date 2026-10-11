@@ -44,7 +44,12 @@ linters:
     - gochecknoinits
     - prealloc
     - dupword
+    # an exception names its linter and says why
+    - nolintlint
   settings:
+    nolintlint:
+      require-specific: true
+      require-explanation: true
     revive:
       enable-all-rules: false
       rules:
@@ -75,6 +80,16 @@ linters:
         - stringXbytes
         - unnecessaryBlock
         - weakCond
+  exclusions:
+    rules:
+      # The CLI reads the files and directories its user names on the command
+      # line. That path is the input, not a traversal.
+      - path: cmd/apikit/
+        linters: [gosec]
+        text: G703
+      # A test runs the toolchain and reads the files it wrote itself.
+      - path: _test\.go
+        linters: [gosec]
 
 formatters:
   enable:
@@ -88,3 +103,8 @@ formatters:
         - blank
         - prefix(github.com/kausys/apikit)
         - default
+
+issues:
+  # Report every finding at once, not the first three of each kind.
+  max-issues-per-linter: 0
+  max-same-issues: 0

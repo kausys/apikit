@@ -105,8 +105,7 @@ func (s *Scanner) resolveTypeAlias(typeName string, visited map[string]bool, all
 	}
 
 	if allowShortName {
-		if idx := strings.LastIndex(typeName, "."); idx >= 0 {
-			shortName := typeName[idx+1:]
+		if _, shortName, ok := strings.CutLast(typeName, "."); ok {
 			if original, ok := s.TypeAliases[shortName]; ok {
 				return s.resolveTypeAlias(original, visited, false)
 			}
@@ -127,8 +126,8 @@ func (s *Scanner) GetEnumForType(typeName string) *EnumInfo {
 
 	// Try with short name
 	shortName := typeName
-	if idx := strings.LastIndex(typeName, "."); idx >= 0 {
-		shortName = typeName[idx+1:]
+	if _, name, ok := strings.CutLast(typeName, "."); ok {
+		shortName = name
 	}
 
 	if enumName, ok := s.TypeToEnum[shortName]; ok {

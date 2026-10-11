@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -21,6 +23,7 @@ var (
 	handlerOutputFile string
 	handlerForce      bool
 	handlerFramework  string
+	handlerCheck      bool
 )
 
 // handlerCmd is the parent "handler" subcommand
@@ -63,7 +66,10 @@ Examples:
   apikit handler gen --verbose
 
   # Dry run (show output without writing)
-  apikit handler gen --dry-run`,
+  apikit handler gen --dry-run
+
+  # In CI: fail if any wrapper is not what the source generates
+  apikit handler gen --check ./...`,
 	RunE: runHandlerGen,
 }
 
@@ -73,6 +79,7 @@ func init() {
 	handlerGenCmd.Flags().StringVarP(&handlerOutputFile, "output", "o", "", "output file (defaults to <source>_apikit.go)")
 	handlerGenCmd.Flags().BoolVar(&handlerForce, "force", false, "force regeneration even if source hasn't changed")
 	handlerGenCmd.Flags().StringVar(&handlerFramework, "framework", "http", "target framework: http (default), fiber, gin, echo")
+	handlerGenCmd.Flags().BoolVar(&handlerCheck, "check", false, "write nothing; fail listing every wrapper that is missing, stale or orphaned")
 
 	handlerCmd.AddCommand(handlerGenCmd)
 	rootCmd.AddCommand(handlerCmd)
@@ -130,8 +137,13 @@ func runHandlerGen(cmd *cobra.Command, args []string) error {
 		log.Printf("Processing %d file(s)...", len(resolvedFiles)) //nolint:gosec // count is safe
 	}
 
+	if handlerOutputFile != "" && len(resolvedFiles) > 1 {
+		return fmt.Errorf("--output names one file, but %d sources were given: each would overwrite the last", len(resolvedFiles))
+	}
+
 	// Create a single parser instance to share cache across all files
 	p := parser.New()
+	var stale []string
 
 	// Process each file
 	for i, sourceFilePath := range resolvedFiles {
@@ -139,9 +151,27 @@ func runHandlerGen(cmd *cobra.Command, args []string) error {
 			log.Printf("[%d/%d] Processing %s", i+1, len(resolvedFiles), sourceFilePath) //nolint:gosec // file path from user args
 		}
 
-		if err := handlerGenerateWithParser(p, sourceFilePath); err != nil {
+		changed, err := handlerGenerateWithParser(p, sourceFilePath)
+		if err != nil {
 			return fmt.Errorf("processing %s: %w", sourceFilePath, err)
 		}
+		stale = append(stale, changed...)
+	}
+
+	orphans, err := orphanWrappers(cwd, sourceFiles)
+	if err != nil {
+		return err
+	}
+	for _, orphan := range orphans {
+		if err := removeWrapper(orphan); err != nil {
+			return err
+		}
+		stale = append(stale, orphan)
+	}
+
+	if handlerCheck && len(stale) > 0 {
+		return fmt.Errorf("%d generated file(s) are not up to date — run apikit handler gen:\n  %s",
+			len(stale), strings.Join(stale, "\n  "))
 	}
 
 	if verbose {
@@ -239,43 +269,32 @@ func isSourceCandidate(name string) bool {
 		!strings.HasSuffix(name, "_test.go")
 }
 
-func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
+// handlerGenerateWithParser brings the wrapper of one source file up to date
+// and returns the files that were not: written, removed, or under --check left
+// alone and reported.
+func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) ([]string, error) {
 	// Determine output file name
 	output := handlerOutputFile
 	if output == "" {
 		output = strings.TrimSuffix(sourceFilePath, ".go") + "_apikit.go"
 	}
 
-	// Check if source has changed (unless --force is used)
-	if !handlerForce {
-		changed, err := checksum.HasSourceChanged(sourceFilePath, output)
-		if err != nil {
-			if verbose {
-				log.Printf("Warning: could not check if source changed: %v", err)
-			}
-		} else if !changed {
-			if verbose {
-				log.Printf("Source unchanged, skipping %s", sourceFilePath) //nolint:gosec // file path from user args
-			}
-			return nil
-		}
-	}
-
-	// Parse the source file
+	// Parse the source file: the handlers, and every struct they read from
+	// whatever package declares it.
 	if verbose {
 		log.Printf("Parsing %s...", sourceFilePath) //nolint:gosec // file path from user args
 	}
 
 	result, err := p.ParseFile(sourceFilePath)
 	if err != nil {
-		return fmt.Errorf("parsing file: %w", err)
+		return nil, fmt.Errorf("parsing file: %w", err)
 	}
 
 	// Errors first: these describe a wrapper that would be generated WRONG rather
 	// than not at all — one that compiles and misbehaves at runtime. Reported
 	// together so one run shows every problem in the file, and always fatal.
 	if len(result.Errors) > 0 {
-		return fmt.Errorf("%s:\n  %s", sourceFilePath, strings.Join(result.Errors, "\n  "))
+		return nil, fmt.Errorf("%s:\n  %s", sourceFilePath, strings.Join(result.Errors, "\n  "))
 	}
 
 	// Warnings are printed unconditionally, not only under --verbose. A warning
@@ -285,17 +304,42 @@ func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
 		log.Printf("Warning: %s", warning) //nolint:gosec // warning from parser output
 	}
 
-	// Check if any handlers were found
+	// A file without handlers has no wrapper. One left from when it had some
+	// would keep registering handlers that no longer exist.
 	if len(result.Handlers) == 0 {
 		if verbose {
 			log.Println("No handlers found with //apikit:handler comment")
 		}
-		return nil
+		if isGeneratedWrapper(output) {
+			return []string{output}, removeWrapper(output)
+		}
+		return nil, nil
+	}
+
+	// What the wrapper is generated from: this generator, its options, and
+	// the packages every struct came from. Unchanged inputs mean an unchanged
+	// wrapper, and the expensive part — type-checking and formatting — is
+	// skipped. Under --check nothing is skipped: the point is to compare.
+	sourceChecksum, err := checksum.CalculateInputsChecksum(
+		filepath.Dir(sourceFilePath),
+		[]string{"apikit-wrapper/" + codegen.FormatVersion, handlerFramework},
+		result.Packages,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("calculating source checksum: %w", err)
+	}
+	if !handlerForce && !handlerCheck {
+		if stored, err := checksum.ExtractChecksum(output); err == nil && stored == sourceChecksum {
+			if verbose {
+				log.Printf("Source unchanged, skipping %s", sourceFilePath) //nolint:gosec // file path from user args
+			}
+			return nil, nil
+		}
 	}
 
 	// Detect encoding.TextUnmarshaler on custom field types so extractors can
 	// emit UnmarshalText instead of an invalid string cast.
-	if err := parser.AnnotateTextUnmarshalers(sourceFilePath, result); err != nil {
+	if err := p.AnnotateTextUnmarshalers(sourceFilePath, result); err != nil {
 		if verbose {
 			log.Printf("Warning: TextUnmarshaler annotation failed: %v", err)
 		}
@@ -317,44 +361,121 @@ func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
 	// Create generator with specified framework
 	gen, err := codegen.NewWithFramework(handlerFramework)
 	if err != nil {
-		return fmt.Errorf("creating generator: %w", err)
-	}
-
-	// Generate code
-	if verbose {
-		log.Println("Generating wrapper code...")
+		return nil, fmt.Errorf("creating generator: %w", err)
 	}
 
 	code, err := gen.Generate(result)
 	if err != nil {
-		return fmt.Errorf("generating code: %w", err)
-	}
-
-	// Calculate source checksum and add to generated code
-	sourceChecksum, err := checksum.CalculateFileChecksum(sourceFilePath)
-	if err != nil {
-		return fmt.Errorf("calculating source checksum: %w", err)
+		return nil, fmt.Errorf("generating code: %w", err)
 	}
 	code = checksum.AddChecksumToGenerated(code, sourceChecksum)
 
 	if dryRun {
 		fmt.Printf("Would write to %s:\n", output)
 		fmt.Println(string(code))
-		return nil
+		return nil, nil
 	}
 
-	// Write output file
+	// Written only when it changed, so an up-to-date tree keeps its
+	// modification times and a build cache keyed on them stays warm.
+	current, err := os.ReadFile(filepath.Clean(output))
+	if err == nil && bytes.Equal(current, code) {
+		return nil, nil
+	}
+	if handlerCheck {
+		return []string{output}, nil
+	}
+
 	if verbose {
 		log.Printf("Writing %s...", output) //nolint:gosec // output path validated before use
 	}
-
-	if err := os.WriteFile(filepath.Clean(output), code, 0600); err != nil { //nolint:gosec // path validated before use
-		return fmt.Errorf("writing output file: %w", err)
+	// Generated source is as readable as the source it is generated from.
+	if err := os.WriteFile(filepath.Clean(output), code, 0o644); err != nil { //nolint:gosec // G306: a Go source file, not a secret
+		return nil, fmt.Errorf("writing output file: %w", err)
 	}
+	return []string{output}, nil
+}
 
+// generatedHeader is the first line of every file apikit generates.
+const generatedHeader = "// Code generated by apikit. DO NOT EDIT."
+
+// isGeneratedWrapper reports whether path is a file apikit generated, so it
+// is never asked to remove one somebody wrote by hand.
+func isGeneratedWrapper(path string) bool {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	line, err := bufio.NewReader(f).ReadString('\n')
+	if err != nil && line == "" {
+		return false
+	}
+	return strings.TrimSpace(line) == generatedHeader
+}
+
+// removeWrapper removes a generated wrapper, or under --check leaves it for
+// the report. Under --dry-run it only says so.
+func removeWrapper(path string) error {
+	if handlerCheck {
+		return nil
+	}
+	if dryRun {
+		fmt.Printf("Would remove %s\n", path)
+		return nil
+	}
 	if verbose {
-		log.Printf("Successfully generated %s", output) //nolint:gosec // output path validated before use
+		log.Printf("Removing %s: its source declares no handler", path) //nolint:gosec // path from the scanned tree
 	}
-
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("removing stale wrapper: %w", err)
+	}
 	return nil
+}
+
+// orphanWrappers finds generated wrappers under directory and dir/...
+// arguments whose source file no longer exists. They would keep compiling
+// handlers that are gone.
+func orphanWrappers(cwd string, args []string) ([]string, error) {
+	var orphans []string
+	for _, arg := range args {
+		path := arg
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		var candidates []string
+		if base, ok := strings.CutSuffix(path, "..."); ok {
+			root := filepath.Clean(base)
+			err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					name := d.Name()
+					if p != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+						name == "testdata" || name == "vendor") {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if strings.HasSuffix(p, "_apikit.go") {
+					candidates = append(candidates, p)
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("walking %s: %w", arg, err)
+			}
+		} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+			matches, _ := filepath.Glob(filepath.Join(path, "*_apikit.go"))
+			candidates = matches
+		}
+		for _, wrapper := range candidates {
+			source := strings.TrimSuffix(wrapper, "_apikit.go") + ".go"
+			if _, err := os.Stat(source); errors.Is(err, fs.ErrNotExist) && isGeneratedWrapper(wrapper) {
+				orphans = append(orphans, wrapper)
+			}
+		}
+	}
+	return orphans, nil
 }

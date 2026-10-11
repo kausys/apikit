@@ -23,6 +23,15 @@ type Error struct {
 
 	// Original error (not serialized)
 	cause error `json:"-"`
+
+	// shared marks an error every request returns, like ErrUnauthorized. A
+	// With* call on one changes a copy: changing it in place would hand one
+	// request's details to every other, and race while doing it.
+	shared bool
+
+	// origin is the shared error a copy was made from, so errors.Is still
+	// matches it.
+	origin *Error
 }
 
 // Error implements the error interface
@@ -43,21 +52,47 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
+// Is reports whether e was made from target by a With* call on a shared error.
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	return ok && e.origin != nil && e.origin == t
+}
+
 // WithDetails adds details to the error
 func (e *Error) WithDetails(details any) *Error {
+	e = e.writable()
 	e.Details = details
 	return e
 }
 
 // WithRequestID adds request ID to the error
 func (e *Error) WithRequestID(requestID string) *Error {
+	e = e.writable()
 	e.RequestID = requestID
 	return e
 }
 
 // WithCause wraps an underlying error
 func (e *Error) WithCause(cause error) *Error {
+	e = e.writable()
 	e.cause = cause
+	return e
+}
+
+// writable returns e itself, or a copy of it when e is shared.
+func (e *Error) writable() *Error {
+	if !e.shared {
+		return e
+	}
+	c := *e
+	c.shared = false
+	c.origin = e
+	return &c
+}
+
+// share marks e as shared by every request (see Error.shared).
+func share(e *Error) *Error {
+	e.shared = true
 	return e
 }
 

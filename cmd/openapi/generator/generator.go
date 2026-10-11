@@ -1,23 +1,25 @@
 package generator
 
 import (
-	"encoding/json"
+	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
-	"github.com/kausys/apikit/cmd/openapi/cache"
 	"github.com/kausys/apikit/cmd/openapi/spec"
 	"github.com/kausys/apikit/cmd/scanner"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Generator orchestrates the OpenAPI spec generation process.
 type Generator struct {
 	config  *Config
-	cache   *cache.Manager
 	scanner *scanner.Scanner
 
 	// referencedSchemas tracks which schemas are actually used in the spec
@@ -26,6 +28,17 @@ type Generator struct {
 	// structsByNameAndSpec indexes structs by model name → spec name → *StructInfo.
 	// The empty string key "" represents the general model (no spec: directive).
 	structsByNameAndSpec map[string]map[string]*scanner.StructInfo
+
+	// problems found while assembling, reported with the validation of the
+	// documents.
+	problems []string
+
+	// warnedTypes are the unknown types already warned about: one line per
+	// type, not one per field.
+	warnedTypes map[string]bool
+
+	// stale are the files Check found out of date.
+	stale []string
 }
 
 // New creates a new Generator with the given options.
@@ -44,23 +57,14 @@ func New(opts ...Option) *Generator {
 
 	return &Generator{
 		config:            cfg,
-		cache:             cache.NewManager(cfg.Dir),
 		scanner:           scanner.New(scannerOpts...),
 		referencedSchemas: make(map[string]bool),
+		warnedTypes:       make(map[string]bool),
 	}
 }
 
-// prepare initializes cache, scans source files, and caches scanned data.
+// prepare scans the source files and checks what they declare.
 func (g *Generator) prepare() error {
-	if g.config.UseCache {
-		if err := g.cache.Init(); err != nil {
-			return fmt.Errorf("failed to initialize cache: %w", err)
-		}
-		if err := g.cache.Load(); err != nil {
-			return fmt.Errorf("failed to load cache: %w", err)
-		}
-	}
-
 	if err := g.scanner.Scan(); err != nil {
 		return fmt.Errorf("failed to scan source files: %w", err)
 	}
@@ -69,17 +73,7 @@ func (g *Generator) prepare() error {
 	g.buildStructIndex()
 
 	// After the index: that is what a declared schema name resolves against.
-	if err := g.checkDeclaredSchemasResolve(); err != nil {
-		return err
-	}
-
-	if g.config.UseCache {
-		if err := g.cacheScannedData(); err != nil {
-			return fmt.Errorf("failed to cache scanned data: %w", err)
-		}
-	}
-
-	return nil
+	return g.checkDeclaredSchemasResolve()
 }
 
 // Generate runs the full generation pipeline.
@@ -93,6 +87,9 @@ func (g *Generator) Generate() (*spec.OpenAPI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble spec: %w", err)
 	}
+	if err := g.checkDocuments(map[string]*spec.OpenAPI{"": openAPI}); err != nil {
+		return nil, err
+	}
 
 	// Phase 5: Write output
 	if g.config.OutputFile != "" {
@@ -102,59 +99,6 @@ func (g *Generator) Generate() (*spec.OpenAPI, error) {
 	}
 
 	return openAPI, nil
-}
-
-// cacheScannedData saves source file mappings to cache.
-// Schema/route conversion is deferred to assemble() to avoid duplicate work.
-func (g *Generator) cacheScannedData() error {
-	// Group schemas and routes by source file (using relative paths)
-	fileSchemas := make(map[string][]string)
-	fileRoutes := make(map[string][]string)
-
-	// Track which file each schema came from (convert to relative path)
-	for name := range g.scanner.Structs {
-		if sourceFile, ok := g.scanner.StructSources[name]; ok {
-			relPath := g.toRelativePath(sourceFile)
-			fileSchemas[relPath] = append(fileSchemas[relPath], name)
-		}
-	}
-
-	// Track which file each route came from (convert to relative path)
-	for opID := range g.scanner.Routes {
-		if sourceFile, ok := g.scanner.RouteSources[opID]; ok {
-			relPath := g.toRelativePath(sourceFile)
-			fileRoutes[relPath] = append(fileRoutes[relPath], opID)
-		}
-	}
-
-	// Update cache index with file entries
-	allFiles := make(map[string]bool)
-	for f := range fileSchemas {
-		allFiles[f] = true
-	}
-	for f := range fileRoutes {
-		allFiles[f] = true
-	}
-
-	for filePath := range allFiles {
-		schemas := fileSchemas[filePath]
-		routes := fileRoutes[filePath]
-		if err := g.cache.UpdateEntry(filePath, schemas, routes, nil); err != nil {
-			return err
-		}
-	}
-
-	// Save cache index
-	return g.cache.Save()
-}
-
-// toRelativePath converts an absolute path to a path relative to the config directory.
-func (g *Generator) toRelativePath(absPath string) string {
-	relPath, err := filepath.Rel(g.config.Dir, absPath)
-	if err != nil {
-		return absPath // fallback to absolute if conversion fails
-	}
-	return relPath
 }
 
 // assemble creates the OpenAPI spec from scanned data.
@@ -196,6 +140,14 @@ func (g *Generator) assemble() (*spec.OpenAPI, error) {
 		g.addRoute(openAPI, routeInfo)
 	}
 
+	// A route can make a model of a type no directive named — its body's
+	// struct — so the models are collected again after the routes.
+	for name, structInfo := range g.scanner.Structs {
+		if _, done := openAPI.Components.Schemas[name]; !done && structInfo.IsModel {
+			openAPI.Components.Schemas[name] = g.structToSchema(structInfo)
+		}
+	}
+
 	// Clean unused schemas if enabled
 	if g.config.CleanUnused {
 		// First, recursively mark schemas referenced by other referenced schemas
@@ -205,6 +157,36 @@ func (g *Generator) assemble() (*spec.OpenAPI, error) {
 	}
 
 	return openAPI, nil
+}
+
+// checkDocuments validates the documents about to be written. A problem fails
+// the run under --validate or --strict, and is a warning otherwise.
+func (g *Generator) checkDocuments(docs map[string]*spec.OpenAPI) error {
+	problems := slices.Clone(g.problems)
+	for _, name := range slices.Sorted(maps.Keys(docs)) {
+		for _, problem := range ValidateDocument(docs[name]) {
+			if name != "" {
+				problem = name + ": " + problem
+			}
+			problems = append(problems, problem)
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	if g.config.Validate || g.config.Strict {
+		return fmt.Errorf("the generated spec is not valid:\n  %s", strings.Join(problems, "\n  "))
+	}
+	for _, problem := range problems {
+		warn("%s", problem)
+	}
+	return nil
+}
+
+// warn prints a warning on standard error, where it does not mix with a spec
+// written to standard output.
+func warn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...)
 }
 
 // markSchemaAsReferenced marks a schema as being used.
@@ -305,24 +287,49 @@ func (g *Generator) cleanUnusedSchemas(components *spec.Components) {
 
 // writeOutput writes the spec to the output file.
 func (g *Generator) writeOutput(openAPI *spec.OpenAPI) error {
-	dir := filepath.Dir(g.config.OutputFile)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return err
-	}
-
-	var data []byte
-	var err error
-
-	switch g.config.OutputFormat {
-	case "json":
-		data, err = json.MarshalIndent(openAPI, "", "  ")
-	default:
-		data, err = yaml.Marshal(openAPI)
-	}
-
+	data, err := g.marshal(openAPI)
 	if err != nil {
 		return err
 	}
+	if err := g.emit(g.config.OutputFile, data); err != nil {
+		return err
+	}
+	return g.staleError()
+}
 
-	return os.WriteFile(g.config.OutputFile, data, 0600)
+// marshal encodes a document in the configured format.
+func (g *Generator) marshal(openAPI *spec.OpenAPI) ([]byte, error) {
+	if g.config.OutputFormat == "json" {
+		return json.Marshal(openAPI, json.Deterministic(true), jsontext.WithIndent("  "))
+	}
+	return yaml.Marshal(openAPI)
+}
+
+// emit writes a generated file when its content changed, so an unchanged
+// spec keeps its modification time. Under Check it writes nothing and records
+// the file as stale instead.
+func (g *Generator) emit(path string, data []byte) error {
+	current, err := os.ReadFile(filepath.Clean(path))
+	if err == nil && bytes.Equal(current, data) {
+		return nil
+	}
+	if g.config.Check {
+		g.stale = append(g.stale, path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	// A spec is a document to read and to embed, not a secret.
+	return os.WriteFile(path, data, 0o644) //nolint:gosec // G306: a generated document
+}
+
+// staleError reports, under Check, the files that are not what the source
+// generates.
+func (g *Generator) staleError() error {
+	if len(g.stale) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d spec file(s) are not up to date — run apikit openapi gen:\n  %s",
+		len(g.stale), strings.Join(g.stale, "\n  "))
 }

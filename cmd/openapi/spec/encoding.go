@@ -22,10 +22,10 @@ type Encoding struct {
 	// no effect. When style is "form", the default value is true. For all other styles, the default
 	// value is false. This field SHALL be ignored if the request body media type is not
 	// application/x-www-form-urlencoded.
-	Explode bool `json:"explode,omitempty" yaml:"explode,omitempty"`
+	Explode bool `json:"explode,omitzero" yaml:"explode,omitempty"`
 	// When this is true, parameter values are serialized using reserved expansion, as defined by
 	// RFC6570, which allows RFC3986's reserved character set, as well as percent-encoded triples, to
 	// pass through unchanged. The default value is false. This field SHALL be ignored if the request
 	// body media type is not application/x-www-form-urlencoded.
-	AllowReserved bool `json:"allowReserved,omitempty" yaml:"allowReserved,omitempty"`
+	AllowReserved bool `json:"allowReserved,omitzero" yaml:"allowReserved,omitempty"`
 }

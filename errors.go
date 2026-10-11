@@ -72,6 +72,15 @@ func NotAcceptable(message string) *Error {
 	}
 }
 
+// PayloadTooLarge creates a 413 error
+func PayloadTooLarge(message string) *Error {
+	return &Error{
+		Code:      http.StatusRequestEntityTooLarge,
+		ErrorCode: http.StatusText(http.StatusRequestEntityTooLarge),
+		Message:   message,
+	}
+}
+
 // UnprocessableEntity creates a 422 error
 func UnprocessableEntity(message string) *Error {
 	return &Error{
@@ -125,25 +134,28 @@ func GatewayTimeout(message string) *Error {
 // Predefined Errors
 // ============================================================================
 
+// The predefined errors are shared by every request that returns one. A With*
+// call on one of them changes a copy, and errors.Is still matches the copy
+// against the original.
 var (
 	// ErrInternalServer is a generic internal server error
-	ErrInternalServer = InternalError("internal server error")
+	ErrInternalServer = share(InternalError("internal server error"))
 
 	// ErrSomethingWentWrong is a generic internal server error
-	ErrSomethingWentWrong = InternalError("something went wrong")
+	ErrSomethingWentWrong = share(InternalError("something went wrong"))
 
 	// ErrNotImplemented indicates the feature is not implemented
-	ErrNotImplemented = NotImplemented("not implemented")
+	ErrNotImplemented = share(NotImplemented("not implemented"))
 
 	// ErrUnauthorized indicates authentication is required
-	ErrUnauthorized = Unauthorized("authentication required")
+	ErrUnauthorized = share(Unauthorized("authentication required"))
 
 	// ErrForbidden indicates access is denied
-	ErrForbidden = Forbidden("access denied")
+	ErrForbidden = share(Forbidden("access denied"))
 
 	// ErrInvalidRequest indicates the request is invalid
-	ErrInvalidRequest = BadRequest("invalid request")
+	ErrInvalidRequest = share(BadRequest("invalid request"))
 
 	// ErrTooManyRequests indicates the client has exceeded the rate limit
-	ErrTooManyRequests = TooManyRequests("too many requests")
+	ErrTooManyRequests = share(TooManyRequests("too many requests"))
 )

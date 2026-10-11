@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
-	"github.com/kausys/apikit/cmd/openapi/cache"
 	"github.com/kausys/apikit/cmd/openapi/generator"
 
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ var (
 	openapiPattern      string
 	openapiDir          string
 	openapiNoCache      bool
+	openapiCheck        bool
 	openapiNoDefault    bool
 	openapiStrict       bool
 	openapiFlatten      bool
@@ -65,27 +67,15 @@ Example:
 // openapiCleanCmd is the "openapi clean" subcommand
 var openapiCleanCmd = &cobra.Command{
 	Use:   "clean",
-	Short: "Clean the cache directory",
-	Long: `Clean removes the .openapi cache directory.
+	Short: "Remove the .openapi directory older versions left behind",
+	Long: `Clean removes the .openapi directory under --dir.
 
-This forces a full rebuild on the next generate command.
+apikit no longer keeps a cache: every run scans the source, which is what
+produced every spec anyway. The directory is only what older versions left.
 
 Example:
   apikit openapi clean`,
 	RunE: runOpenapiClean,
-}
-
-// openapiStatusCmd is the "openapi status" subcommand
-var openapiStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show cache status",
-	Long: `Status displays information about the current cache state.
-
-It shows the number of cached files, schemas, routes, and parameters.
-
-Example:
-  apikit openapi status`,
-	RunE: runOpenapiStatus,
 }
 
 //nolint:gochecknoinits // cobra command registration requires init
@@ -94,20 +84,24 @@ func init() {
 	openapiGenCmd.Flags().StringVarP(&openapiOutputFormat, "format", "f", "yaml", "Output format: yaml or json")
 	openapiGenCmd.Flags().StringVarP(&openapiPattern, "pattern", "p", "./...", "Package pattern to scan")
 	openapiGenCmd.Flags().StringVarP(&openapiDir, "dir", "d", ".", "Root directory to scan from")
-	openapiGenCmd.Flags().BoolVar(&openapiNoCache, "no-cache", false, "Disable incremental caching")
-	openapiGenCmd.Flags().BoolVar(&openapiFlatten, "flatten", false, "Inline $ref schemas instead of using references")
-	openapiGenCmd.Flags().BoolVar(&openapiValidate, "validate", false, "Validate the generated spec")
+	openapiGenCmd.Flags().BoolVar(&openapiNoCache, "no-cache", false, "Has no effect: there is no cache")
+	_ = openapiGenCmd.Flags().MarkDeprecated("no-cache", "there is no cache; every run scans the source")
+	openapiGenCmd.Flags().BoolVar(&openapiFlatten, "flatten", false, "Has no effect")
+	_ = openapiGenCmd.Flags().MarkDeprecated("flatten", "it never had an effect; schemas are referenced")
+	openapiGenCmd.Flags().BoolVar(&openapiValidate, "validate", false, "Fail when the generated spec is not valid OpenAPI (implied by --strict)")
+	openapiGenCmd.Flags().BoolVar(&openapiCheck, "check", false, "Write nothing; fail when a spec on disk is not what the source generates")
 	openapiGenCmd.Flags().StringSliceVar(&openapiIgnorePaths, "ignore", nil, "Path patterns to ignore")
 	openapiGenCmd.Flags().BoolVar(&openapiCleanUnused, "clean-unused", false, "Remove unreferenced schemas")
 	openapiGenCmd.Flags().BoolVar(&openapiMultiSpec, "multi-specs", false, "Generate multiple specs based on spec: directives")
 	openapiGenCmd.Flags().StringVar(&openapiSpecName, "spec", "", "Generate only a specific spec by name")
 	openapiGenCmd.Flags().BoolVar(&openapiNoDefault, "no-default", false, "Skip generating the default spec for routes without spec: directives")
-	openapiGenCmd.Flags().BoolVar(&openapiStrict, "strict", false, "Fail instead of silently dropping routes (missing spec: under --no-default, packages that do not type-check)")
+	openapiGenCmd.Flags().BoolVar(&openapiStrict, "strict", false, "Fail instead of degrading the spec: routes dropped (no spec: under --no-default, a package that does not type-check, a malformed swagger:route), response types that resolve to nothing, and an invalid document")
 	openapiGenCmd.Flags().BoolVar(&openapiEnumRefs, "enum-refs", false, "Generate enums as $ref references instead of inline")
+
+	openapiCleanCmd.Flags().StringVarP(&openapiDir, "dir", "d", ".", "Root directory the .openapi directory is under")
 
 	openapiCmd.AddCommand(openapiGenCmd)
 	openapiCmd.AddCommand(openapiCleanCmd)
-	openapiCmd.AddCommand(openapiStatusCmd)
 	rootCmd.AddCommand(openapiCmd)
 }
 
@@ -121,9 +115,8 @@ func runOpenapiGen(cmd *cobra.Command, args []string) error {
 		generator.WithDir(openapiDir),
 		generator.WithPattern(openapiPattern),
 		generator.WithOutput(openapiOutputFile, openapiOutputFormat),
-		generator.WithCache(!openapiNoCache),
-		generator.WithFlatten(openapiFlatten),
 		generator.WithValidation(openapiValidate),
+		generator.WithCheck(openapiCheck),
 		generator.WithIgnorePaths(openapiIgnorePaths...),
 		generator.WithCleanUnused(openapiCleanUnused),
 		generator.WithNoDefault(openapiNoDefault),
@@ -156,36 +149,10 @@ func runOpenapiGen(cmd *cobra.Command, args []string) error {
 }
 
 func runOpenapiClean(cmd *cobra.Command, args []string) error {
-	mgr := cache.NewManager(".")
-
-	if err := mgr.Clean(); err != nil {
-		return fmt.Errorf("failed to clean cache: %w", err)
+	dir := filepath.Join(openapiDir, ".openapi")
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("removing %s: %w", dir, err)
 	}
-
-	fmt.Println("Cache cleaned successfully")
-	return nil
-}
-
-func runOpenapiStatus(cmd *cobra.Command, args []string) error {
-	mgr := cache.NewManager(".")
-
-	if err := mgr.Init(); err != nil {
-		return fmt.Errorf("failed to initialize cache: %w", err)
-	}
-
-	if err := mgr.Load(); err != nil {
-		fmt.Println("No cache found")
-		return nil //nolint:nilerr // intentionally ignoring load error when cache doesn't exist
-	}
-
-	stats := mgr.Stats()
-
-	fmt.Println("Cache Status")
-	fmt.Println("───────────────")
-	fmt.Printf("   Files:      %d\n", stats.FileCount)
-	fmt.Printf("   Schemas:    %d\n", stats.SchemaCount)
-	fmt.Printf("   Routes:     %d\n", stats.RouteCount)
-	fmt.Printf("   Parameters: %d\n", stats.ParameterCount)
-
+	fmt.Printf("Removed %s\n", dir)
 	return nil
 }

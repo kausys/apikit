@@ -318,7 +318,7 @@ func TestGenerate_InvalidCSVPath(t *testing.T) {
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // test helper with trusted paths
+	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(data)
 }

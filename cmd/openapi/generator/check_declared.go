@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -23,14 +24,9 @@ import (
 // type-check took out only one of them. That is how a legacy `spec: dashboard`
 // route lost a schema declared in a V3 package.
 //
-// A warning rather than an error, including under --strict, and deliberately so:
-// the 346-handler consumer this was found in has four of these today, all
-// predating the run that exposed them. The bar the other conditions were held to
-// was that nothing generating cleanly starts failing, and this one does not clear
-// it yet. What it does clear is being findable: one block naming the routes,
-// instead of the per-type "unknown type" line that scrolls past among the dozens
-// a normal run prints for domain id types. Promoting it to a --strict error is a
-// follow-up, once consumers have a release to clean up against.
+// A warning, and under --strict an error: a route documented as returning a
+// model that is not in the document is a spec that lies to every client
+// generated from it.
 func (g *Generator) checkDeclaredSchemasResolve() error {
 	var unresolved []string
 	for _, route := range g.scanner.Routes {
@@ -47,13 +43,17 @@ func (g *Generator) checkDeclaredSchemasResolve() error {
 	}
 
 	slices.Sort(unresolved)
-	fmt.Printf(
-		"warning: these routes declare a response type that resolves to no model, "+
+	message := fmt.Sprintf(
+		"these routes declare a response type that resolves to no model, "+
 			"enum or built-in, so the response is written as a bare `type: string` and "+
 			"--clean-unused drops the schema:\n    %s\n  the model is usually in a "+
 			"package the scan did not reach — check --ignore and any package that failed "+
-			"to type-check — or the swagger:model name does not match\n",
+			"to type-check — or the swagger:model name does not match",
 		strings.Join(unresolved, "\n    "))
+	if g.config.Strict {
+		return errors.New(message)
+	}
+	warn("%s", message)
 	return nil
 }
 

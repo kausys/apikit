@@ -9,7 +9,7 @@ import (
 
 	"github.com/kausys/apikit/cmd/openapi/spec"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ConfigFile represents the .openapi.yaml configuration file.

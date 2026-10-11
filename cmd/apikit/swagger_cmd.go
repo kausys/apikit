@@ -11,6 +11,7 @@ import (
 var (
 	swaggerOutputDir   string
 	swaggerVersion     string
+	swaggerSHA256      string
 	swaggerUseDefaults bool
 	swaggerSimple      bool
 )
@@ -27,19 +28,28 @@ Swagger UI for use with your OpenAPI specifications.`,
 
 var swaggerDownloadCmd = &cobra.Command{
 	Use:   "download",
-	Short: "Download the latest Swagger UI release",
-	Long: `Download the latest (or specific) Swagger UI release from GitHub.
+	Short: "Download a Swagger UI release",
+	Long: `Download a Swagger UI release from GitHub: the version this apikit pins
+unless --version names another, or "latest" for the newest one.
+
+The pinned version's archive is checked against the checksum apikit knows for
+it, so a go:generate directive produces the same swagger-ui.zip on every
+machine. Another version is checked against --sha256 when given, and its
+checksum is printed otherwise so it can be pinned.
 
 This command fetches the Swagger UI release, extracts the dist folder,
 applies customizations (custom initializer, CSS), removes unnecessary files
 (source maps, ES modules), and packages it as swagger-ui.zip ready for embedding.
 
 Examples:
-  # Download latest version with default customizations
+  # Download the pinned version with default customizations
   apikit swagger download -o ./pkg/openapi
 
-  # Download specific version
-  apikit swagger download --version 5.29.4 -o ./pkg/openapi
+  # Download a specific version, pinned to its checksum
+  apikit swagger download --version 5.29.4 --sha256 <sum> -o ./pkg/openapi
+
+  # Download the newest release
+  apikit swagger download --version latest -o ./pkg/openapi
 
   # Download without customizations
   apikit swagger download --with-defaults=false -o ./pkg/openapi
@@ -59,7 +69,8 @@ var swaggerVersionCmd = &cobra.Command{
 //nolint:gochecknoinits // cobra command registration requires init
 func init() {
 	swaggerDownloadCmd.Flags().StringVarP(&swaggerOutputDir, "output", "o", ".", "Output directory for swagger-ui.zip")
-	swaggerDownloadCmd.Flags().StringVar(&swaggerVersion, "version", "", "Specific version to download (default: latest)")
+	swaggerDownloadCmd.Flags().StringVar(&swaggerVersion, "version", "", "Version to download: \"latest\", or a release (default "+swagger.DefaultVersion+")")
+	swaggerDownloadCmd.Flags().StringVar(&swaggerSHA256, "sha256", "", "SHA-256 the release archive must have")
 	swaggerDownloadCmd.Flags().BoolVar(&swaggerUseDefaults, "with-defaults", true, "Include default initializer and CSS customizations")
 	swaggerDownloadCmd.Flags().BoolVar(&swaggerSimple, "simple", false, "Use simple initializer for single-spec mode")
 
@@ -72,6 +83,7 @@ func runSwaggerDownload(cmd *cobra.Command, args []string) error {
 	opts := swagger.DownloadOptions{
 		OutputDir: swaggerOutputDir,
 		Version:   swaggerVersion,
+		SHA256:    swaggerSHA256,
 	}
 
 	if swaggerUseDefaults {

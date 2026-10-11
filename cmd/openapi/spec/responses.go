@@ -1,10 +1,10 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A container for the expected responses of an operation. The container maps a HTTP response code
@@ -53,7 +53,7 @@ func (r *Responses) MarshalJSON() ([]byte, error) {
 		result["default"] = r.Default
 	}
 
-	return json.Marshal(result)
+	return json.Marshal(result, json.Deterministic(true))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.

@@ -123,8 +123,7 @@ func GetCustomType(typeName string) *TypeInfo {
 	}
 
 	// Fallback: extract short name from fully-qualified type
-	if idx := strings.LastIndex(typeName, "/"); idx >= 0 {
-		shortName := typeName[idx+1:]
+	if _, shortName, ok := strings.CutLast(typeName, "/"); ok {
 		return customTypes[shortName]
 	}
 

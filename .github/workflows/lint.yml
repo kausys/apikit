@@ -17,12 +17,17 @@ jobs:
           - cmd
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
+          # go.mod names 1.27 with no patch: take the newest 1.27.x, not the
+          # one the runner happens to have cached.
+          check-latest: true
 
+      # cmd is linted against the root module in this tree, not the last
+      # release of it.
       - name: Create go.work
         run: go work init . cmd
 
@@ -30,4 +35,8 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           working-directory: ${{ matrix.module }}
-          args: --config ${{ matrix.module == '.' && '.golangci.yml' || '../.golangci.yml' }}
+          args: --config ${{ github.workspace }}/.golangci.yml
+          # Keep in sync with GOLANGCI_LINT_VERSION in the Makefile — otherwise
+          # CI floats to whatever the action defaults to while local lint stays
+          # pinned, and the two can drift.
+          version: v2.14.0

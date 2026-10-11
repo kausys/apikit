@@ -1,7 +1,9 @@
 package apikit
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -118,7 +120,7 @@ func TestSanitize_EmbeddedStruct(t *testing.T) {
 	}
 
 	m := Sanitize(Extended{
-		Base:  Base{ID: 1},
+		ID:    1,
 		Name:  "test",
 		Token: "secret",
 	}).(map[string]any)
@@ -131,7 +133,7 @@ func TestSanitize_EmbeddedStruct(t *testing.T) {
 func TestSanitize_UnexportedFields(t *testing.T) {
 	type Payload struct {
 		Public  string `json:"public"`
-		private string //nolint:unused
+		private string //nolint:unused // present so the test proves an unexported field is skipped
 	}
 
 	m := Sanitize(Payload{Public: "yes"}).(map[string]any)
@@ -268,4 +270,89 @@ func BenchmarkSanitize_NonStruct(b *testing.B) {
 	for range b.N {
 		Sanitize("just a string")
 	}
+}
+
+// A field kept off the wire with json:"-" stays out of the log. It used to be
+// logged under its Go name, password and all.
+func TestSanitize_JSONDashFieldIsOmitted(t *testing.T) {
+	type Login struct {
+		Email    string `json:"email"`
+		Password string `json:"-"`
+	}
+
+	m := Sanitize(Login{Email: "a@b.c", Password: "hunter2"}).(map[string]any)
+
+	assert.NotContains(t, m, "Password")
+	assert.NotContains(t, fmt.Sprint(m), "hunter2")
+}
+
+// Structs inside maps and interfaces are sanitized like any other. They used
+// to be returned whole, sensitive fields included.
+func TestSanitize_MapsAndInterfacesAreWalked(t *testing.T) {
+	type Secret struct {
+		Token string `json:"token" log:"sensitive"`
+	}
+	type Payload struct {
+		ByName map[string]Secret `json:"byName"`
+		Any    any               `json:"any"`
+	}
+
+	got := fmt.Sprint(Sanitize(Payload{
+		ByName: map[string]Secret{"a": {Token: "tok-1"}},
+		Any:    Secret{Token: "tok-2"},
+	}))
+
+	assert.NotContains(t, got, "tok-1")
+	assert.NotContains(t, got, "tok-2")
+	assert.Contains(t, got, "[REDACTED]")
+}
+
+// An array used to panic: IsNil is not defined on arrays.
+func TestSanitize_ArrayDoesNotPanic(t *testing.T) {
+	assert.NotPanics(t, func() {
+		assert.Equal(t, []any{1, 2}, Sanitize([2]int{1, 2}))
+	})
+}
+
+// A value that renders itself is kept: time.Time has no exported fields and
+// used to log as {}.
+func TestSanitize_TimeIsKept(t *testing.T) {
+	type Event struct {
+		At time.Time `json:"at"`
+	}
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	m := Sanitize(Event{At: at}).(map[string]any)
+
+	assert.Equal(t, at, m["at"])
+}
+
+// Too deep to walk is too deep to log: the value used to be returned whole.
+func TestSanitize_DepthLimitTruncates(t *testing.T) {
+	type Node struct {
+		Next   *Node  `json:"next"`
+		Secret string `json:"secret" log:"sensitive"`
+	}
+	root := &Node{}
+	n := root
+	for range maxSanitizeDepth + 5 {
+		n.Next = &Node{Secret: "deep"}
+		n = n.Next
+	}
+
+	assert.NotContains(t, fmt.Sprint(Sanitize(root)), "deep")
+}
+
+func TestSanitize_EmbeddedPointerIsFlattened(t *testing.T) {
+	type Base struct {
+		ID string `json:"id"`
+	}
+	type Wrapper struct {
+		*Base
+		Name string `json:"name"`
+	}
+
+	m := Sanitize(Wrapper{Base: &Base{ID: "x"}, Name: "n"}).(map[string]any)
+
+	assert.Equal(t, "x", m["id"])
 }

@@ -1,9 +1,9 @@
 package spec
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Holds the relative paths to the individual endpoints and their operations.
@@ -27,7 +27,7 @@ func (p *Paths) MarshalJSON() ([]byte, error) {
 	if p == nil || p.PathItems == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(p.PathItems)
+	return json.Marshal(p.PathItems, json.Deterministic(true))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.

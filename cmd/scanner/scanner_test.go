@@ -79,18 +79,6 @@ func TestShouldIgnorePath(t *testing.T) {
 	}
 }
 
-func TestGetCompiledRegex(t *testing.T) {
-	pattern := `swagger:\w+`
-
-	// First call - should compile and cache
-	re1 := getCompiledRegex(pattern)
-	assert.NotNil(t, re1)
-
-	// Second call - should return cached
-	re2 := getCompiledRegex(pattern)
-	assert.Equal(t, re1, re2)
-}
-
 // Helper to create AST CommentGroup from text
 func createCommentGroup(comments ...string) *ast.CommentGroup {
 	if len(comments) == 0 {

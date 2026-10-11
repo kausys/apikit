@@ -1,8 +1,8 @@
 package generator
 
 import (
-	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,8 +10,6 @@ import (
 
 	"github.com/kausys/apikit/cmd/openapi/spec"
 	"github.com/kausys/apikit/cmd/scanner"
-
-	"gopkg.in/yaml.v3"
 )
 
 // buildStructIndex builds the structsByNameAndSpec index for O(1) lookups.
@@ -44,6 +42,9 @@ func (g *Generator) GenerateMulti() (map[string]*spec.OpenAPI, error) {
 	specs, err := g.assembleMulti()
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble specs: %w", err)
+	}
+	if err := g.checkDocuments(specs); err != nil {
+		return nil, err
 	}
 
 	// Phase 5: Write output files
@@ -275,29 +276,17 @@ func (g *Generator) writeMultiOutput(specs map[string]*spec.OpenAPI) error {
 		return err
 	}
 
-	for specName, openAPI := range specs {
-		filename := filepath.Join(outputDir, specName+ext)
-
-		var data []byte
-		var err error
-
-		switch g.config.OutputFormat {
-		case "json":
-			data, err = json.MarshalIndent(openAPI, "", "  ")
-		default:
-			data, err = yaml.Marshal(openAPI)
-		}
-
+	for _, specName := range slices.Sorted(maps.Keys(specs)) {
+		data, err := g.marshal(specs[specName])
 		if err != nil {
 			return fmt.Errorf("failed to marshal spec %s: %w", specName, err)
 		}
-
-		if err := os.WriteFile(filename, data, 0600); err != nil {
+		if err := g.emit(filepath.Join(outputDir, specName+ext), data); err != nil {
 			return fmt.Errorf("failed to write spec %s: %w", specName, err)
 		}
 	}
 
-	return nil
+	return g.staleError()
 }
 
 // GetSpecNames returns all spec names that would be generated.
@@ -331,6 +320,9 @@ func (g *Generator) GenerateSpec(specName string) (*spec.OpenAPI, error) {
 	openAPI, err := g.assembleForSpec(strings.ToLower(specName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble spec: %w", err)
+	}
+	if err := g.checkDocuments(map[string]*spec.OpenAPI{specName: openAPI}); err != nil {
+		return nil, err
 	}
 
 	// Phase 5: Write output

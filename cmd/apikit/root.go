@@ -18,8 +18,6 @@ var rootCmd = &cobra.Command{
 Commands:
   handler gen   — Generate HTTP handler wrappers from annotated Go functions
   openapi gen   — Generate OpenAPI 3.1 specifications from Go source code
-  openapi clean — Clean the OpenAPI cache
-  openapi status — Show OpenAPI cache status
   swagger       — Manage Swagger UI assets
   sdk gen       — Generate Go SDK from an OpenAPI specification
 
@@ -30,6 +28,13 @@ Example:
   # Generate OpenAPI specification
   apikit openapi gen -o openapi.yaml`,
 	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	// main reports the error once; cobra would print it again.
+	SilenceErrors: true,
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+		// The flags parsed: from here a failure is the command's, and the
+		// usage text would only bury it.
+		cmd.SilenceUsage = true
+	},
 }
 
 //nolint:gochecknoinits // cobra flag registration requires init

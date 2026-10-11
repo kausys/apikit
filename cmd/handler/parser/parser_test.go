@@ -17,12 +17,8 @@ func TestNew(t *testing.T) {
 		t.Error("expected fset to be initialized")
 	}
 
-	if p.structs == nil {
-		t.Error("expected structs map to be initialized")
-	}
-
-	if p.externalStructs == nil {
-		t.Error("expected externalStructs map to be initialized")
+	if p.packages == nil {
+		t.Error("expected packages map to be initialized")
 	}
 }
 
@@ -37,8 +33,8 @@ import "context"
 
 // CreateUserRequest represents the request
 type CreateUserRequest struct {
-	Name  string ` + "`" + `json:"name" validate:"required"` + "`" + `
-	Email string ` + "`" + `json:"email" validate:"required,email"` + "`" + `
+	Name  string ` + "`" + `query:"name" json:"name" validate:"required"` + "`" + `
+	Email string ` + "`" + `query:"email" json:"email" validate:"required,email"` + "`" + `
 }
 
 // CreateUserResponse represents the response

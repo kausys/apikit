@@ -1,0 +1,113 @@
+package api
+
+import (
+	"encoding/json/v2"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/kausys/apikit"
+)
+
+func serve(t *testing.T, method, target, body string, header http.Header) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.Handle("GET /items", listAPIKit(List))
+	mux.Handle("GET /items/{id}", getAPIKit(Get))
+	mux.Handle("POST /items", createAPIKit(Create))
+	mux.Handle("POST /webhook", webhookAPIKit(Webhook))
+	mux.Handle("PATCH /items/{id}", renameAPIKit(Rename))
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	for k, v := range header {
+		r.Header[k] = v
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("decoding %q: %v", w.Body.String(), err)
+	}
+	return m
+}
+
+func TestPointersSlicesDefaultsAndHeaders(t *testing.T) {
+	w := serve(t, "GET", "/items?active=true&name=ana&kind=a&kind=b&size=1&size=2&since=2026-01-02T03:04:05Z", "",
+		http.Header{"X-Trace": {"t1", "t2"}})
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	got := decode(t, w)
+	if got["limit"] != float64(20) || got["status"] != "active" {
+		t.Errorf("defaults not applied: %v", got)
+	}
+	if got["active"] != true || got["name"] != "ana" {
+		t.Errorf("pointers not bound: %v", got)
+	}
+	if len(got["kinds"].([]any)) != 2 || len(got["sizes"].([]any)) != 2 || len(got["trace"].([]any)) != 2 {
+		t.Errorf("slices not bound: %v", got)
+	}
+	if got["since"] != "2026-01-02T03:04:05Z" {
+		t.Errorf("time not bound: %v", got)
+	}
+}
+
+func TestBadValueIs400(t *testing.T) {
+	if w := serve(t, "GET", "/items?limit=many", "", nil); w.Code != 400 {
+		t.Errorf("status %d, want 400", w.Code)
+	}
+}
+
+func TestTypedPathID(t *testing.T) {
+	if w := serve(t, "GET", "/items/itm_1", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), "itm_1") {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+	if w := serve(t, "GET", "/items/usr_1", "", nil); w.Code != 400 {
+		t.Errorf("foreign id: status %d, want 400", w.Code)
+	}
+	if w := serve(t, "GET", "/items/itm_missing", "", nil); w.Code != 404 {
+		t.Errorf("handler refusal: status %d, want 404", w.Code)
+	}
+}
+
+func TestBodyIsDecodedAndValidated(t *testing.T) {
+	w := serve(t, "POST", "/items", `{"name":"lamp","price":3}`, nil)
+	if w.Code != 201 || decode(t, w)["name"] != "lamp" {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if w := serve(t, "POST", "/items", `{"name":"x"}`, nil); w.Code != 422 {
+		t.Errorf("rule on the body: status %d, want 422", w.Code)
+	}
+}
+
+func TestBodyIsReadWithJSONv2(t *testing.T) {
+	if w := serve(t, "POST", "/items", `{"name":"lamp","name":"desk"}`, nil); w.Code != 400 {
+		t.Errorf("duplicate member: status %d, want 400", w.Code)
+	}
+	if w := serve(t, "POST", "/items", `{"NAME":"lamp"}`, nil); w.Code != 422 {
+		t.Errorf("another case is another name, so name is missing: status %d, want 422", w.Code)
+	}
+}
+
+func TestBodyOverTheLimitIs413(t *testing.T) {
+	apikit.SetMaxBodyBytes(16)
+	t.Cleanup(func() { apikit.SetMaxBodyBytes(0) })
+	if w := serve(t, "POST", "/webhook", strings.Repeat("x", 64), nil); w.Code != 413 {
+		t.Errorf("status %d, want 413", w.Code)
+	}
+	if w := serve(t, "POST", "/webhook", "short", nil); w.Body.String() != "\"5\"\n" {
+		t.Errorf("raw body: %q", w.Body)
+	}
+}
+
+func TestPayloadFromAnotherPackage(t *testing.T) {
+	w := serve(t, "PATCH", "/items/itm_9", `{"name":"desk"}`, nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "itm_9:desk") {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+}

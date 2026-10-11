@@ -20,9 +20,9 @@ type XML struct {
 	Prefix string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
 	// Declares whether the property definition translates to an attribute instead of an element.
 	// Default value is false.
-	Attribute bool `json:"attribute,omitempty" yaml:"attribute,omitempty"`
+	Attribute bool `json:"attribute,omitzero" yaml:"attribute,omitempty"`
 	// MAY be used only for an array definition. Signifies whether the array is wrapped (for example,
 	// <books><book/><book/></books>) or unwrapped (<book/><book/>). Default value is false. The definition
 	// takes effect only when defined alongside type being "array" (outside the items).
-	Wrapped bool `json:"wrapped,omitempty" yaml:"wrapped,omitempty"`
+	Wrapped bool `json:"wrapped,omitzero" yaml:"wrapped,omitempty"`
 }

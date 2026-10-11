@@ -34,12 +34,11 @@ func ListUsers() {}
 	assert.Empty(t, s.Routes)
 }
 
-// The shape this was found in: a pattern that only ever lines up with the
-// absolute file path, never with the import path. The consumer's checkout was
-// .../platform/phoenix/phoenix, so `--ignore phoenix/phoenix` matched every file
-// of the inner tree while `testproject/...`-style import paths never contain the
-// doubled segment.
-func TestScanFailsWhenIgnoreMatchesOnlyAbsolutePaths(t *testing.T) {
+// A pattern is matched against file paths relative to the scanned directory,
+// so the directories above it — where the repository happens to be checked out
+// — cannot match. Against the absolute path, a pattern naming the checkout's
+// own directory excluded every file on one machine and none on another.
+func TestIgnoreDoesNotMatchAboveTheScannedDirectory(t *testing.T) {
 	files := map[string]string{
 		"api/handlers.go": `package api
 // swagger:route GET /users users listUsers
@@ -48,7 +47,7 @@ func ListUsers() {}
 	}
 	tmpDir := createTestProject(t, files)
 
-	// Matches .../<tmpdir>/api/handlers.go, never the import path testproject/api.
+	// Lines up with .../<tmpdir>/api/handlers.go only through the checkout.
 	pattern := filepath.Join(filepath.Base(tmpDir), "api")
 
 	s := New(
@@ -57,10 +56,8 @@ func ListUsers() {}
 		WithIgnorePaths(pattern),
 	)
 
-	err := s.Scan()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "excluded every file")
+	require.NoError(t, s.Scan())
+	assert.Contains(t, s.Routes, "listUsers")
 }
 
 // No ignore patterns and no directives is a legitimate scan of a tree that has
@@ -105,9 +102,8 @@ func ListOther() {}
 
 // --strict reports packages that do not type-check because their routes would be
 // dropped. A package the caller excluded has no routes to drop, so it must not
-// be reported — and that has to hold for a pattern matched against the file path,
-// which is the only kind the phoenix case had.
-func TestStrictIgnoresBrokenPackageExcludedByAbsolutePath(t *testing.T) {
+// be reported — and that has to hold for a pattern matched against the file path.
+func TestStrictIgnoresBrokenPackageExcludedByFilePath(t *testing.T) {
 	files := map[string]string{
 		"api/handlers.go": `package api
 // swagger:route GET /users users listUsers
@@ -120,8 +116,8 @@ func Broken() { undefinedSymbol() }
 	}
 	tmpDir := createTestProject(t, files)
 
-	// Absolute-path-only: the import path is testproject/legacy.
-	pattern := filepath.Join(filepath.Base(tmpDir), "legacy")
+	// The file path relative to the scanned directory: legacy/broken.go.
+	pattern := "legacy/broken.go"
 
 	s := New(
 		WithDir(tmpDir),

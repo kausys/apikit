@@ -15,10 +15,10 @@ type Header struct {
 	// be used for rich text representation.
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 	// Determines whether this header is mandatory. The default value is false.
-	Required bool `json:"required,omitempty" yaml:"required,omitempty"`
+	Required bool `json:"required,omitzero" yaml:"required,omitempty"`
 	// Specifies that the header is deprecated and SHOULD be transitioned out of usage. Default value
 	// is false.
-	Deprecated bool `json:"deprecated,omitempty" yaml:"deprecated,omitempty"`
+	Deprecated bool `json:"deprecated,omitzero" yaml:"deprecated,omitempty"`
 	// Describes how the header value will be serialized. The default (and only legal value for
 	// headers) is "simple".
 	Style string `json:"style,omitempty" yaml:"style,omitempty"`

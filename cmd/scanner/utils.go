@@ -3,25 +3,9 @@ package scanner
 import (
 	"go/ast"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
-	"sync"
 )
-
-var (
-	regexCache sync.Map
-)
-
-// getCompiledRegex returns a cached compiled regex for the given pattern.
-func getCompiledRegex(pattern string) *regexp.Regexp {
-	if cached, ok := regexCache.Load(pattern); ok {
-		return cached.(*regexp.Regexp)
-	}
-	re := regexp.MustCompile(pattern)
-	regexCache.Store(pattern, re)
-	return re
-}
 
 // shouldIgnorePath reports whether path matches any ignore pattern.
 //
@@ -30,12 +14,11 @@ func getCompiledRegex(pattern string) *regexp.Regexp {
 // `/src/myfoo/barbecue` — which plain strings.Contains did.
 //
 // It is called with two different kinds of path (a package's import path and
-// each of its absolute file paths), so an anchored prefix match would not work
-// for both; segment containment is what is meaningful to either. Note this means
-// an ignore pattern is matched wherever it appears in the path, which is why a
-// pattern should be specific enough to be unambiguous — a caller relying on a
-// pattern that only ever matched because of where the repo happens to be checked
-// out is relying on an accident.
+// each of its file paths, relative to the scanned directory), so an anchored
+// prefix match would not work for both; segment containment is what is
+// meaningful to either. File paths are relative so that where the repository is
+// checked out cannot match: an absolute path made `--ignore phoenix` exclude
+// everything in a clone that happened to live under a directory of that name.
 func shouldIgnorePath(path string, ignorePaths []string) bool {
 	segs := strings.Split(filepath.ToSlash(path), "/")
 	for _, pattern := range ignorePaths {
@@ -180,9 +163,12 @@ func extractSectionLines(doc *ast.CommentGroup, directive string) []string {
 			continue
 		}
 
-		// Check if we've hit another directive
+		// Check if we've hit another directive. A status line ("404: Type",
+		// as go-swagger writes responses) has a colon too, but no directive
+		// is named by a status code.
 		if comment != "" && !strings.HasPrefix(comment, DashPrefix) &&
-			strings.Contains(comment, ":") && !strings.HasPrefix(comment, "- ") {
+			strings.Contains(comment, ":") && !strings.HasPrefix(comment, "- ") &&
+			!startsWithStatus(comment) {
 			break
 		}
 
