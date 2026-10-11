@@ -48,18 +48,10 @@ const DefaultInitializer = `window.onload = function () {
     }
   };
 
-  const getBaseURL = () => {
-    var url = window.location.search.match(/url=([^&]+)/);
-    if (url && url.length > 1) {
-      url = decodeURIComponent(url[1]);
-    } else {
-      url = window.location.origin;
-    }
-    return url;
-  };
-
+  // The specs come from this origin only: a spec location read from the
+  // page URL would render any document under it.
   (async () => {
-    await buildSystemAsync(getBaseURL());
+    await buildSystemAsync(window.location.origin);
   })();
 };
 `

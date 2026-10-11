@@ -3,9 +3,13 @@ package swagger
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -125,33 +129,88 @@ func TestProcessSwaggerUIWithoutCustomizations(t *testing.T) {
 	assert.False(t, hasCustomCSS, "Should not have custom CSS when not provided")
 }
 
-func TestDownloadWithMockServer(t *testing.T) {
-	// Create a mock swagger-ui zip
-	var zipBuf bytes.Buffer
-	w := zip.NewWriter(&zipBuf)
-	f, err := w.Create("swagger-ui-5.0.0/dist/index.html")
+func releaseArchive(t *testing.T, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create("swagger-ui-" + strings.TrimPrefix(version, "v") + "/dist/index.html")
 	require.NoError(t, err)
 	_, err = f.Write([]byte("<html><head></head><body>Mock</body></html>"))
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
+	return buf.Bytes()
+}
 
-	// Create a mock server
+func serveArchive(t *testing.T, archive []byte) string {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(zipBuf.Bytes())
+		_, _ = w.Write(archive)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
+	return server.URL + "/%s.zip"
+}
 
-	// Create temp directory
-	tmpDir := t.TempDir()
+func sha(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
 
-	// Note: This test cannot fully test Download() without modifying
-	// the DownloadURLTemplate, but we can verify the processing logic works
-	_, err = processSwaggerUI(zipBuf.Bytes(), "v5.0.0", DownloadOptions{})
+// The archive is checked against the checksum asked for, and written; a
+// second download of the same release leaves the file as it was.
+func TestDownloadVerifiesAndWritesOnce(t *testing.T) {
+	archive := releaseArchive(t, "v5.0.0")
+	dir := t.TempDir()
+	opts := DownloadOptions{OutputDir: dir, Version: "5.0.0", SHA256: sha(archive), URLTemplate: serveArchive(t, archive)}
+
+	version, err := Download(opts)
+	require.NoError(t, err)
+	assert.Equal(t, "v5.0.0", version)
+	path := filepath.Join(dir, "swagger-ui.zip")
+	first, err := os.Stat(path)
 	require.NoError(t, err)
 
-	// Verify temp dir exists
-	_, err = os.Stat(tmpDir)
+	_, err = Download(opts)
 	require.NoError(t, err)
+	second, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, first.ModTime(), second.ModTime(), "an unchanged zip is not rewritten")
+}
+
+// An archive with another checksum is refused, and nothing is written.
+func TestDownloadRefusesAnotherChecksum(t *testing.T) {
+	archive := releaseArchive(t, "v5.0.0")
+	dir := t.TempDir()
+
+	_, err := Download(DownloadOptions{OutputDir: dir, Version: "v5.0.0", SHA256: strings.Repeat("0", 64), URLTemplate: serveArchive(t, archive)})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing")
+	assert.NoFileExists(t, filepath.Join(dir, "swagger-ui.zip"))
+}
+
+// The pinned default is checked against the checksum apikit knows for it.
+func TestDownloadDefaultIsPinnedAndKnown(t *testing.T) {
+	assert.Contains(t, knownChecksums, DefaultVersion, "the default version must carry its checksum")
+
+	archive := releaseArchive(t, DefaultVersion)
+	_, err := Download(DownloadOptions{OutputDir: t.TempDir(), URLTemplate: serveArchive(t, archive)})
+
+	require.Error(t, err, "a fake archive under the pinned version is not the release")
+}
+
+func TestDownloadRefusesAnOversizedResponse(t *testing.T) {
+	big := bytes.Repeat([]byte("x"), maxArchiveBytes+1)
+
+	_, err := Download(DownloadOptions{OutputDir: t.TempDir(), Version: "v5.0.0", URLTemplate: serveArchive(t, big)})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// The bundled initializer takes the spec location from nowhere but this
+// origin: reading it from the page URL renders any document under it.
+func TestDefaultInitializerIgnoresThePageURL(t *testing.T) {
+	assert.NotContains(t, DefaultInitializer, "location.search")
 }
 
 func TestDownloadOptions(t *testing.T) {
