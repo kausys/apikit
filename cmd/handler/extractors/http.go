@@ -46,7 +46,9 @@ func (e *HTTPExtractor) ExtractHeader(field *parser.Field, paramName, fieldName 
 }
 
 func (e *HTTPExtractor) ExtractHeaderSlice(field *parser.Field, paramName, fieldName string) (string, []string) {
-	varName := fmt.Sprintf(`r.Header["%s"]`, paramName)
+	// Values canonicalizes the name, as Get does: r.Header["x-trace"] would
+	// miss a header the client sent as X-Trace.
+	varName := fmt.Sprintf(`r.Header.Values("%s")`, paramName)
 	return GenerateSliceCodeByType(varName, fieldName, field.SliceType, field)
 }
 
@@ -57,14 +59,12 @@ func (e *HTTPExtractor) ExtractCookie(field *parser.Field, paramName, fieldName 
 
 func (e *HTTPExtractor) ExtractForm(field *parser.Field, paramName, fieldName string) (string, []string) {
 	varName := fmt.Sprintf(`r.FormValue("%s")`, paramName)
-	return GenerateCodeByType(varName, fieldName, field.Type, field)
+	return GenerateCodeByType(varName, fieldName, GetBaseType(field), field)
 }
 
 func (e *HTTPExtractor) ExtractFormSlice(field *parser.Field, paramName, fieldName string) (string, []string) {
-	code := fmt.Sprintf(`if vals := r.Form["%s"]; len(vals) > 0 {
-		payload.%s = vals
-	}`, paramName, fieldName)
-	return code, nil
+	varName := fmt.Sprintf(`r.Form["%s"]`, paramName)
+	return GenerateSliceCodeByType(varName, fieldName, field.SliceType, field)
 }
 
 func (e *HTTPExtractor) ExtractFormFile(field *parser.Field, paramName, fieldPath string) (string, []string) {

@@ -5,35 +5,49 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // Parser analyzes Go source files to find apikit handlers
 type Parser struct {
-	fset               *token.FileSet
-	structs            map[string]*Struct           // Cache of parsed structs
-	externalStructs    map[string]*Struct           // Cache of external structs by "importPath.StructName"
-	structImportsCache map[string]map[string]string // Cache of imports for each external struct
-	parsedFiles        map[string]bool              // Cache of already parsed files
-	fileImportsCache   map[string]map[string]string // Cache of file imports by file path
-	importPathCache    map[string]string            // Cache of resolved import paths
-	goModPath          string                       // Cached path to go.mod
-	moduleName         string                       // Cached module name from go.mod
-	currentDir         string                       // Directory of the file being parsed
+	fset            *token.FileSet
+	packages        map[string]*pkgScope         // Structs of each package parsed so far, by directory
+	importPathCache map[string]string            // Cache of resolved import paths
+	goModPath       string                       // Cached path to go.mod
+	moduleName      string                       // Cached module name from go.mod
+	currentDir      string                       // Directory of the file being parsed
+	consulted       map[string]bool              // Packages the file being parsed read a struct from
+	typed           map[string]*packages.Package // Type-checked packages, by directory
+}
+
+// pkgScope is what one package declares: its structs by name, and for each
+// struct the imports of the file it is declared in, which is what the
+// qualified types among its fields resolve against.
+//
+// Every lookup goes through the package a type belongs to. Structs used to be
+// cached by bare name across every file of a run, so a field of type Body in
+// one package could resolve to another package's Body — whichever was parsed
+// last — and its wrapper bound the wrong fields with nothing reported.
+type pkgScope struct {
+	dir     string
+	structs map[string]*Struct
+	imports map[string]map[string]string
 }
 
 // New creates a new Parser instance
 func New() *Parser {
 	return &Parser{
-		fset:               token.NewFileSet(),
-		structs:            make(map[string]*Struct),
-		externalStructs:    make(map[string]*Struct),
-		structImportsCache: make(map[string]map[string]string),
-		parsedFiles:        make(map[string]bool),
-		fileImportsCache:   make(map[string]map[string]string),
-		importPathCache:    make(map[string]string),
+		fset:            token.NewFileSet(),
+		packages:        make(map[string]*pkgScope),
+		importPathCache: make(map[string]string),
+		typed:           make(map[string]*packages.Package),
 	}
 }
 
@@ -45,6 +59,7 @@ func (p *Parser) ParseFile(filename string) (*ParseResult, error) {
 		return nil, fmt.Errorf("getting absolute path: %w", err)
 	}
 	p.currentDir = filepath.Dir(absPath)
+	p.consulted = map[string]bool{p.currentDir: true}
 
 	// Parse the file
 	file, err := parser.ParseFile(p.fset, filename, nil, parser.ParseComments)
@@ -62,50 +77,42 @@ func (p *Parser) ParseFile(filename string) (*ParseResult, error) {
 		Warnings: []string{},
 	}
 
-	// Collect imports for resolving external types
-	imports := make(map[string]string) // alias -> import path
-	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		alias := filepath.Base(path)
-		if imp.Name != nil {
-			alias = imp.Name.Name
-		}
-		imports[alias] = path
-	}
+	imports := fileImports(file)
 
-	// First pass: collect all struct definitions
-	ast.Inspect(file, func(n ast.Node) bool {
-		if typeSpec, ok := n.(*ast.TypeSpec); ok {
-			if structType, ok := typeSpec.Type.(*ast.StructType); ok {
-				s := p.parseStruct(typeSpec.Name.Name, structType, typeSpec)
-				result.Structs[s.Name] = s
-				p.structs[s.Name] = s // Cache for nested resolution
+	// The structs this file declares, as before; the payload of a handler is
+	// looked up in the whole package below.
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			if typeSpec, ok := spec.(*ast.TypeSpec); ok {
+				if structType, ok := typeSpec.Type.(*ast.StructType); ok {
+					st := p.parseStruct(typeSpec.Name.Name, structType, typeSpec)
+					p.resolveNestedStructsRecursive(st, p.packageScope(p.currentDir), imports, map[string]bool{})
+					result.Structs[st.Name] = st
+				}
 			}
 		}
-		return true
-	})
-
-	// Resolve nested structs in all fields with circular reference detection
-	for _, s := range result.Structs {
-		visited := make(map[string]bool)
-		p.resolveNestedStructsRecursive(s, visited, imports)
 	}
 
 	// Second pass: find handlers
 	ast.Inspect(file, func(n ast.Node) bool {
 		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			if handler := p.parseHandler(funcDecl, file.Name.Name, result); handler != nil {
+			if handler := p.parseHandler(funcDecl, file.Name.Name, imports, result); handler != nil {
 				result.Handlers = append(result.Handlers, *handler)
 			}
 		}
 		return true
 	})
 
+	result.Packages = slices.Sorted(maps.Keys(p.consulted))
 	return result, nil
 }
 
 // parseHandler checks if a function is a handler and extracts its information
-func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, result *ParseResult) *Handler {
+func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, imports map[string]string, result *ParseResult) *Handler {
 	// Check for apikit:handler comment
 	if !hasApikitComment(fn) {
 		return nil
@@ -165,12 +172,8 @@ func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, result *ParseRes
 		}
 	}
 
-	// Look up struct info.
-	//
-	// The lookup is FILE-scoped: result.Structs holds only what this file
-	// declares. A payload declared in another file of the same package, or
-	// qualified from another package (getTypeName reduces `dto.Foo` to `Foo`),
-	// is not found here.
+	// Look up struct info, in the package the payload type belongs to: this
+	// one for a bare name, the imported one for a qualified name.
 	//
 	// Not finding it is an ERROR, and it is the most dangerous condition this
 	// parser can hit. With h.Struct nil, prepareHandlerData returns early and the
@@ -178,17 +181,37 @@ func (p *Parser) parseHandler(fn *ast.FuncDecl, pkgName string, result *ParseRes
 	// or query extraction, no body unmarshal, no validation. That wrapper
 	// COMPILES and registers on its route, so the failure is a handler receiving
 	// a zero payload in production with nothing having gone wrong at build time.
-	structName := p.getTypeName(params[1].Type)
-	if s, ok := result.Structs[structName]; ok {
-		h.Struct = s
-	} else {
+	payloadType := strings.TrimPrefix(h.ParamType, "*")
+	s, importPath, alias := p.lookupStruct(payloadType, p.packageScope(p.currentDir), imports)
+	if s == nil {
 		result.Errors = append(result.Errors, fmt.Sprintf(
-			"%s: %s takes payload %q, which is not declared in this file — "+
-				"apikit resolves the payload type per file, so it must live "+
-				"alongside its handler (a type from another file or package "+
-				"would silently generate a wrapper that parses nothing)",
-			p.fset.Position(fn.Pos()), fn.Name.Name, structName))
+			"%s: %s takes payload %q, which is not a struct apikit can find — "+
+				"it must be declared in this package, or in a package of this "+
+				"module imported by this file (a type it cannot read would "+
+				"silently generate a wrapper that parses nothing)",
+			p.fset.Position(fn.Pos()), fn.Name.Name, payloadType))
 		return nil
+	}
+	h.Struct = s
+
+	// A handler that takes the *http.Request may read the body itself; one
+	// that does not has only what the wrapper fills.
+	if !h.HasRequest {
+		if unbound := unboundJSONFields(s); len(unbound) > 0 {
+			for _, name := range unbound {
+				result.Errors = append(result.Errors, fmt.Sprintf(
+					"%s: %s takes %s, whose field %s has a json name but nothing fills it — "+
+						"the wrapper decodes the body only into a field tagged json:\"body\" "+
+						"(or marked // in: body); move it into that field's struct, or bind "+
+						"it with a path, query, header, cookie or form tag",
+					p.fset.Position(fn.Pos()), fn.Name.Name, payloadType, name))
+			}
+			return nil
+		}
+	}
+	if importPath != "" {
+		h.ParamImport = importPath
+		h.ParamImportAlias = alias
 	}
 
 	// Get return type (first return value)
@@ -512,13 +535,15 @@ func (p *Parser) exprToString(expr ast.Expr) string {
 }
 
 // resolveNestedStructsRecursive resolves nested struct types for all fields recursively
-// with circular reference detection
-func (p *Parser) resolveNestedStructsRecursive(s *Struct, visited map[string]bool, imports map[string]string) {
-	// Prevent infinite recursion by tracking visited structs
-	if visited[s.Name] {
+// with circular reference detection. scope is the package s is declared in,
+// imports the imports of its file.
+func (p *Parser) resolveNestedStructsRecursive(s *Struct, scope *pkgScope, imports map[string]string, visited map[string]bool) {
+	key := scope.dir + "." + s.Name
+	if visited[key] {
 		return
 	}
-	visited[s.Name] = true
+	visited[key] = true
+	defer delete(visited, key)
 
 	for i := range s.Fields {
 		field := &s.Fields[i]
@@ -528,200 +553,186 @@ func (p *Parser) resolveNestedStructsRecursive(s *Struct, visited map[string]boo
 			continue
 		}
 
-		// Get the base type name (without pointer/slice)
-		typeName := field.Type
-		if field.IsPointer {
-			typeName = strings.TrimPrefix(typeName, "*")
-		}
-		if field.IsSlice {
-			typeName = field.SliceType
-		}
-
-		// Extract package path from type if it contains a dot
-		pkgAlias := ""
-		structName := typeName
-		if strings.Contains(typeName, ".") {
-			parts := strings.Split(typeName, ".")
-			if len(parts) == 2 {
-				pkgAlias = parts[0]
-				structName = parts[1]
-				field.PackagePath = pkgAlias
-			}
-		}
-
-		// Try to resolve from cache first
-		if nestedStruct, ok := p.structs[typeName]; ok {
-			// Check for circular reference before copying
-			if visited[typeName] {
-				// Circular reference detected - don't resolve further
-				// Just set the basic struct info without fields
-				field.NestedStruct = &Struct{
-					Name:  nestedStruct.Name,
-					IsDTO: nestedStruct.IsDTO,
-					// Fields intentionally left empty to break the cycle
-				}
-				continue
-			}
-
-			// Make a copy to avoid shared references
-			field.NestedStruct = &Struct{
-				Name:   nestedStruct.Name,
-				Fields: make([]Field, len(nestedStruct.Fields)),
-				IsDTO:  nestedStruct.IsDTO,
-			}
-			copy(field.NestedStruct.Fields, nestedStruct.Fields)
-
-			// Recursively resolve nested structs within this struct
-			// Use cached imports if available, otherwise use current imports
-			structImports := imports
-			if cachedImports, ok := p.structImportsCache[typeName]; ok {
-				structImports = cachedImports
-			}
-			p.resolveNestedStructsRecursive(field.NestedStruct, visited, structImports)
+		// An inline struct is declared right here: its fields resolve in
+		// the same scope.
+		if field.NestedStruct != nil {
+			p.resolveNestedStructsRecursive(field.NestedStruct, scope, imports, visited)
 			continue
 		}
 
-		// If not in cache and has package prefix, try to load from external package
-		if pkgAlias != "" {
-			if importPath, ok := imports[pkgAlias]; ok {
-				externalStruct, externalImports := p.loadExternalStruct(importPath, structName)
-				if externalStruct != nil {
-					// Cache it with full name for future lookups
-					p.structs[typeName] = externalStruct
-					// Cache the imports for this struct
-					p.structImportsCache[typeName] = externalImports
-
-					// Check for circular reference
-					if visited[typeName] {
-						field.NestedStruct = &Struct{
-							Name:  externalStruct.Name,
-							IsDTO: externalStruct.IsDTO,
-						}
-						continue
-					}
-
-					// Make a copy
-					field.NestedStruct = &Struct{
-						Name:   externalStruct.Name,
-						Fields: make([]Field, len(externalStruct.Fields)),
-						IsDTO:  externalStruct.IsDTO,
-					}
-					copy(field.NestedStruct.Fields, externalStruct.Fields)
-
-					// Recursively resolve nested structs within the external struct
-					// Use the imports from the external file
-					p.resolveNestedStructsRecursive(field.NestedStruct, visited, externalImports)
-				}
-			}
+		// Get the base type name (without pointer/slice)
+		typeName := strings.TrimPrefix(field.Type, "*")
+		if field.IsSlice {
+			typeName = strings.TrimPrefix(field.SliceType, "*")
 		}
+		if alias, _, ok := strings.Cut(typeName, "."); ok {
+			field.PackagePath = alias
+		}
+
+		nested, nestedScope, nestedImports := p.findStruct(typeName, scope, imports)
+		if nested == nil {
+			continue
+		}
+
+		// Circular reference: name the struct, leave its fields out.
+		if visited[nestedScope.dir+"."+nested.Name] {
+			field.NestedStruct = &Struct{Name: nested.Name, IsDTO: nested.IsDTO}
+			continue
+		}
+
+		field.NestedStruct = nested.clone()
+		p.resolveNestedStructsRecursive(field.NestedStruct, nestedScope, nestedImports, visited)
 	}
 }
 
-// loadExternalStruct loads a struct from an external package using fast file-based parsing
-// Returns the struct and the imports from the file where it was found
-func (p *Parser) loadExternalStruct(importPath, structName string) (*Struct, map[string]string) {
-	// Check cache first
-	cacheKey := importPath + "." + structName
-	if cached, ok := p.externalStructs[cacheKey]; ok {
-		// Return cached struct with its cached imports
-		cachedImports := p.structImportsCache[cacheKey]
-		return cached, cachedImports
-	}
-
-	// Resolve the import path to a directory
-	pkgDir := p.resolveImportPath(importPath)
-	if pkgDir == "" {
-		return nil, nil
-	}
-
-	// Find all Go files in the package directory
-	files, err := filepath.Glob(filepath.Join(pkgDir, "*.go"))
-	if err != nil {
-		return nil, nil
-	}
-
-	// Parse each file looking for the struct
-	for _, file := range files {
-		// Skip test files
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-
-		// Check if file was already parsed
-		if cachedImports, ok := p.fileImportsCache[file]; ok {
-			// File already parsed, check if struct is in cache
-			structCacheKey := importPath + "." + structName
-			if cachedStruct, ok := p.externalStructs[structCacheKey]; ok {
-				return cachedStruct, cachedImports
+// unboundJSONFields returns the payload fields that carry a json name and that
+// no binding fills. The wrapper decodes the body into one field, the one named
+// "body"; a json name anywhere else on the payload reads like a binding and is
+// not one, so a struct of them produced a wrapper that parsed nothing.
+func unboundJSONFields(s *Struct) []string {
+	var names []string
+	for _, f := range s.Fields {
+		if f.IsEmbedded {
+			if f.NestedStruct != nil {
+				names = append(names, unboundJSONFields(f.NestedStruct)...)
 			}
-			// Struct not in this file, skip it
 			continue
 		}
+		if f.IsBody || f.IsRawBody || f.IsRequest || f.IsResponseWriter || f.IsFile || f.InComment != "" {
+			continue
+		}
+		tag := reflect.StructTag(f.StructTag)
+		name, _, _ := strings.Cut(tag.Get(TagJSON), ",")
+		if name == "" || name == "-" || name == "body" {
+			continue
+		}
+		bound := false
+		for _, source := range []string{TagPath, TagQuery, TagHeader, TagCookie, TagForm} {
+			if _, ok := tag.Lookup(source); ok {
+				bound = true
+				break
+			}
+		}
+		if !bound {
+			names = append(names, f.Name)
+		}
+	}
+	return names
+}
 
-		// Parse the file
+// lookupStruct returns a resolved copy of the struct typeName names, seen from
+// a file of scope with the given imports, and for a qualified name the import
+// path and alias it came through.
+func (p *Parser) lookupStruct(typeName string, scope *pkgScope, imports map[string]string) (*Struct, string, string) {
+	found, foundScope, foundImports := p.findStruct(typeName, scope, imports)
+	if found == nil {
+		return nil, "", ""
+	}
+	s := found.clone()
+	p.resolveNestedStructsRecursive(s, foundScope, foundImports, map[string]bool{})
+	alias, _, qualified := strings.Cut(typeName, ".")
+	if !qualified {
+		return s, "", ""
+	}
+	return s, imports[alias], alias
+}
+
+// findStruct finds the declaration typeName names: in scope for a bare name,
+// in the imported package for a qualified one. It returns the declaration, the
+// package it is in and the imports of its file.
+func (p *Parser) findStruct(typeName string, scope *pkgScope, imports map[string]string) (*Struct, *pkgScope, map[string]string) {
+	if alias, name, ok := strings.Cut(typeName, "."); ok {
+		importPath, known := imports[alias]
+		if !known {
+			return nil, nil, nil
+		}
+		dir := p.resolveImportPath(importPath)
+		if dir == "" {
+			return nil, nil, nil
+		}
+		scope = p.packageScope(dir)
+		typeName = name
+	}
+	if p.consulted != nil {
+		p.consulted[scope.dir] = true
+	}
+	s, ok := scope.structs[typeName]
+	if !ok {
+		return nil, nil, nil
+	}
+	return s, scope, scope.imports[typeName]
+}
+
+// packageScope parses the package in dir once and returns what it declares.
+// Tests and generated wrappers are left out: neither declares a payload.
+func (p *Parser) packageScope(dir string) *pkgScope {
+	if scope, ok := p.packages[dir]; ok {
+		return scope
+	}
+	scope := &pkgScope{
+		dir:     dir,
+		structs: make(map[string]*Struct),
+		imports: make(map[string]map[string]string),
+	}
+	p.packages[dir] = scope
+
+	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") || strings.HasSuffix(file, "_apikit.go") {
+			continue
+		}
 		src, err := parser.ParseFile(p.fset, file, nil, parser.ParseComments)
 		if err != nil {
 			continue
 		}
-
-		// Collect imports from this file
-		fileImports := make(map[string]string)
-		for _, imp := range src.Imports {
-			path := strings.Trim(imp.Path.Value, `"`)
-			alias := filepath.Base(path)
-			if imp.Name != nil {
-				alias = imp.Name.Name
-			}
-			fileImports[alias] = path
-		}
-
-		// Cache the imports
-		p.fileImportsCache[file] = fileImports
-
-		// Parse ALL structs in this file and cache them
-		// This way we only parse each file once
-		var foundStruct *Struct
+		imports := fileImports(src)
 		for _, decl := range src.Decls {
 			genDecl, ok := decl.(*ast.GenDecl)
 			if !ok {
 				continue
 			}
-
 			for _, spec := range genDecl.Specs {
 				typeSpec, ok := spec.(*ast.TypeSpec)
 				if !ok {
 					continue
 				}
-
-				structType, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-
-				// Parse and cache this struct
-				s := p.parseStruct(typeSpec.Name.Name, structType, typeSpec)
-				structCacheKey := importPath + "." + typeSpec.Name.Name
-				p.externalStructs[structCacheKey] = s
-				// Cache the imports for this struct
-				p.structImportsCache[structCacheKey] = fileImports
-
-				// Check if this is the struct we're looking for
-				if typeSpec.Name.Name == structName {
-					foundStruct = s
+				if structType, ok := typeSpec.Type.(*ast.StructType); ok {
+					scope.structs[typeSpec.Name.Name] = p.parseStruct(typeSpec.Name.Name, structType, typeSpec)
+					scope.imports[typeSpec.Name.Name] = imports
 				}
 			}
 		}
-
-		// Mark as parsed AFTER we've cached all structs
-		p.parsedFiles[file] = true
-
-		// If we found the struct we were looking for, return it
-		if foundStruct != nil {
-			return foundStruct, fileImports
-		}
 	}
+	return scope
+}
 
-	return nil, nil
+// fileImports maps each import of a file to its path, by the name the file
+// uses for it.
+func fileImports(file *ast.File) map[string]string {
+	imports := make(map[string]string)
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		alias := filepath.Base(path)
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		imports[alias] = path
+	}
+	return imports
+}
+
+// clone copies a struct deeply enough that resolving its fields does not
+// change the declaration it was copied from.
+func (s *Struct) clone() *Struct {
+	c := *s
+	c.Fields = make([]Field, len(s.Fields))
+	for i, f := range s.Fields {
+		if f.NestedStruct != nil {
+			f.NestedStruct = f.NestedStruct.clone()
+		}
+		c.Fields[i] = f
+	}
+	return &c
 }
 
 // resolveImportPath converts an import path to a filesystem directory

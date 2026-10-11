@@ -30,6 +30,48 @@ func CalculateFileChecksum(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// CalculateInputsChecksum calculates the SHA256 checksum of everything a
+// wrapper is generated from: the generator itself (its version and options,
+// given as parts) and the Go source of the packages its types were read from.
+// Tests and generated wrappers are left out of a package; neither changes a
+// wrapper.
+//
+// A wrapper depends on more than its handler's file. Its payload may be
+// declared in another file, or another package, and a change there must
+// regenerate it; so must a new apikit, whose output may differ for the same
+// source.
+//
+// Paths are hashed relative to base, the handler's directory, so the same tree
+// hashes the same on every machine: the checksum is committed with the wrapper.
+func CalculateInputsChecksum(base string, parts, packageDirs []string) (string, error) {
+	hash := sha256.New()
+	for _, part := range parts {
+		_, _ = fmt.Fprintf(hash, "%d:%s\n", len(part), part)
+	}
+	for _, dir := range packageDirs {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			return "", err
+		}
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") || strings.HasSuffix(file, "_apikit.go") {
+				continue
+			}
+			content, err := os.ReadFile(filepath.Clean(file))
+			if err != nil {
+				return "", err
+			}
+			name, err := filepath.Rel(base, file)
+			if err != nil {
+				name = filepath.Base(file)
+			}
+			_, _ = fmt.Fprintf(hash, "%s:%d\n", filepath.ToSlash(name), len(content))
+			_, _ = hash.Write(content)
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // ExtractChecksum extracts the checksum from a generated file
 func ExtractChecksum(filePath string) (string, error) {
 	content, err := os.ReadFile(filepath.Clean(filePath))

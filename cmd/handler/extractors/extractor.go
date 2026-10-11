@@ -23,39 +23,38 @@ func GetDefaultTag(field *parser.Field) string {
 }
 
 // GenerateExtractionCode generates code for extracting a value with optional default
-// This is a generic helper to reduce code duplication
+// This is a generic helper to reduce code duplication.
+//
+// parsingFunc turns the string in "val" into an assignment to the field; nil
+// assigns the string as it is. A default tag is the input used when the
+// request leaves the value out, so it goes through the same parsing as a value
+// that was sent: a default of the wrong form fails the request that relies on
+// it instead of being pasted into the generated code as Go.
 func GenerateExtractionCode(varName, fieldName, typeName string, field *parser.Field, parsingFunc func(string, string) string, imports []string) (string, []string) {
-	defaultTag := GetDefaultTag(field)
-	hasDefault := defaultTag != ""
-
-	// For string types, no parsing needed
-	if IsStringType(typeName) {
-		if hasDefault {
-			return fmt.Sprintf(`if val := %s; val != "" {
-		payload.%s = val
-	} else {
-		%s
-	}`, varName, fieldName, GenerateDefaultValue(fieldName, defaultTag, typeName)), imports
-		}
-		return fmt.Sprintf(`if val := %s; val != "" {
-		payload.%s = val
-	}`, varName, fieldName), imports
+	source := varName
+	if def := GetDefaultTag(field); def != "" {
+		source = fmt.Sprintf("cmp.Or(%s, %s)", varName, strconv.Quote(def))
+		imports = append(imports, "cmp")
 	}
 
-	// For types that need parsing
-	parsingCode := parsingFunc("val", fieldName)
-
-	if hasDefault {
-		return fmt.Sprintf(`if val := %s; val != "" {
-		%s
-	} else {
-		%s
-	}`, varName, parsingCode, GenerateDefaultValue(fieldName, defaultTag, typeName)), imports
+	assign := assignCode(fieldName, "val", field.IsPointer)
+	if parsingFunc != nil {
+		assign = parsingFunc("val", fieldName)
 	}
 
 	return fmt.Sprintf(`if val := %s; val != "" {
 		%s
-	}`, varName, parsingCode), imports
+	}`, source, assign), imports
+}
+
+// assignCode assigns the value of a variable of the field's base type to the
+// field, through a pointer when the field is one.
+func assignCode(fieldName, value string, isPointer bool) string {
+	if isPointer {
+		return fmt.Sprintf(`parsed := %s
+		payload.%s = &parsed`, value, fieldName)
+	}
+	return fmt.Sprintf(`payload.%s = %s`, fieldName, value)
 }
 
 // IntBitSize returns the strconv bitSize argument that matches a Go integer
@@ -80,38 +79,54 @@ func IntBitSize(typeName string) string {
 
 // GenerateIntParsing generates code to parse an integer from a string
 func GenerateIntParsing(varName, fieldName, typeName string) string {
-	return fmt.Sprintf(`if i, err := strconv.ParseInt(%s, 10, %s); err == nil {
-		payload.%s = %s(i)
-	} else {
-		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, IntBitSize(typeName), fieldName, typeName, fieldName)
+	return generateIntParsing(varName, fieldName, typeName, false)
+}
+
+func generateIntParsing(varName, fieldName, typeName string, isPointer bool) string {
+	return fmt.Sprintf(`i, err := strconv.ParseInt(%s, 10, %s)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %%w", err)
+		}
+		%s`, varName, IntBitSize(typeName), fieldName, assignCode(fieldName, typeName+"(i)", isPointer))
 }
 
 // GenerateUintParsing generates code to parse an unsigned integer from a string
 func GenerateUintParsing(varName, fieldName, typeName string) string {
-	return fmt.Sprintf(`if i, err := strconv.ParseUint(%s, 10, %s); err == nil {
-		payload.%s = %s(i)
-	} else {
-		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, IntBitSize(typeName), fieldName, typeName, fieldName)
+	return generateUintParsing(varName, fieldName, typeName, false)
+}
+
+func generateUintParsing(varName, fieldName, typeName string, isPointer bool) string {
+	return fmt.Sprintf(`u, err := strconv.ParseUint(%s, 10, %s)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %%w", err)
+		}
+		%s`, varName, IntBitSize(typeName), fieldName, assignCode(fieldName, typeName+"(u)", isPointer))
 }
 
 // GenerateFloatParsing generates code to parse a float from a string
 func GenerateFloatParsing(varName, fieldName, bitSize string) string {
-	return fmt.Sprintf(`if f, err := strconv.ParseFloat(%s, %s); err == nil {
-		payload.%s = float%s(f)
-	} else {
-		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, bitSize, fieldName, bitSize, fieldName)
+	return generateFloatParsing(varName, fieldName, bitSize, false)
+}
+
+func generateFloatParsing(varName, fieldName, bitSize string, isPointer bool) string {
+	return fmt.Sprintf(`f, err := strconv.ParseFloat(%s, %s)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %%w", err)
+		}
+		%s`, varName, bitSize, fieldName, assignCode(fieldName, "float"+bitSize+"(f)", isPointer))
 }
 
 // GenerateBoolParsing generates code to parse a boolean from a string
 func GenerateBoolParsing(varName, fieldName string) string {
-	return fmt.Sprintf(`if b, err := strconv.ParseBool(%s); err == nil {
-		payload.%s = b
-	} else {
-		return fmt.Errorf("invalid %s: %%w", err)
-	}`, varName, fieldName, fieldName)
+	return generateBoolParsing(varName, fieldName, false)
+}
+
+func generateBoolParsing(varName, fieldName string, isPointer bool) string {
+	return fmt.Sprintf(`b, err := strconv.ParseBool(%s)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %%w", err)
+		}
+		%s`, varName, fieldName, assignCode(fieldName, "b", isPointer))
 }
 
 // toCamelCase converts a PascalCase string to camelCase (first letter lowercase)
@@ -175,21 +190,21 @@ func GetParameterName(field *parser.Field, tagName string) string {
 // Returns: (code, imports)
 func GenerateCodeByType(varName, fieldName, typeName string, field *parser.Field) (string, []string) {
 	var imports []string
-	var code string
+	isPointer := field.IsPointer
 
 	switch {
 	case IsStringType(typeName):
-		code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, nil, imports)
+		return GenerateExtractionCode(varName, fieldName, typeName, field, nil, imports)
 
 	case IsIntType(typeName):
 		imports = append(imports, "strconv")
-		parsingFunc := func(v, f string) string { return GenerateIntParsing(v, f, typeName) }
-		code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+		parsingFunc := func(v, f string) string { return generateIntParsing(v, f, typeName, isPointer) }
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 
 	case IsUintType(typeName):
 		imports = append(imports, "strconv")
-		parsingFunc := func(v, f string) string { return GenerateUintParsing(v, f, typeName) }
-		code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+		parsingFunc := func(v, f string) string { return generateUintParsing(v, f, typeName, isPointer) }
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 
 	case IsFloatType(typeName):
 		imports = append(imports, "strconv")
@@ -197,48 +212,45 @@ func GenerateCodeByType(varName, fieldName, typeName string, field *parser.Field
 		if typeName == "float32" {
 			bitSize = "32"
 		}
-		parsingFunc := func(v, f string) string { return GenerateFloatParsing(v, f, bitSize) }
-		code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+		parsingFunc := func(v, f string) string { return generateFloatParsing(v, f, bitSize, isPointer) }
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 
 	case IsBoolType(typeName):
 		imports = append(imports, "strconv")
-		parsingFunc := GenerateBoolParsing
-		code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
-
-	default:
-		// Check if there's a custom type extractor registered in the Type Registry
-		if typeExtractor, ok := types.Get(typeName); ok {
-			// Use the registered ParseFunc to generate parsing code
-			parsingFunc := func(v, f string) string {
-				return typeExtractor.ParseFunc(v, f, field.IsPointer)
-			}
-
-			// Add import if specified
-			if typeExtractor.Import != "" {
-				imports = append(imports, typeExtractor.Import)
-			}
-
-			// Generate extraction code with the custom parser
-			code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
-		} else if field.ImplementsTextUnmarshaler {
-			// Types that implement encoding.TextUnmarshaler (e.g. typed IDs)
-			parsingFunc := func(v, f string) string {
-				return GenerateTextUnmarshalerParsing(v, f, typeName, field.IsPointer)
-			}
-			code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
-		} else if !field.IsEmbedded {
-			// Fallback: for unknown custom types (e.g., enums), cast the string value
-			// This handles types like model.AgentStatus, model.UserRole, etc.
-			// BUT: Skip embedded structs - they should have been expanded by the parser
-			parsingFunc := func(v, f string) string {
-				return fmt.Sprintf(`payload.%s = %s(%s)`, f, typeName, v)
-			}
-			code, imports = GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
-		}
-		// else: Embedded struct without extractor - skip (should have been expanded)
+		parsingFunc := func(v, f string) string { return generateBoolParsing(v, f, isPointer) }
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 	}
 
-	return code, imports
+	// Check if there's a custom type extractor registered in the Type Registry
+	if typeExtractor, ok := types.Get(typeName); ok {
+		parsingFunc := func(v, f string) string {
+			return typeExtractor.ParseFunc(v, f, isPointer)
+		}
+		if typeExtractor.Import != "" {
+			imports = append(imports, typeExtractor.Import)
+		}
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+	}
+
+	if field.ImplementsTextUnmarshaler {
+		// Types that implement encoding.TextUnmarshaler (e.g. typed IDs)
+		parsingFunc := func(v, f string) string {
+			return GenerateTextUnmarshalerParsing(v, f, typeName, isPointer)
+		}
+		return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
+	}
+
+	if field.IsEmbedded {
+		// Embedded struct without extractor - skip (should have been expanded)
+		return "", imports
+	}
+
+	// Fallback: for unknown custom types (e.g., enums), cast the string value
+	// This handles types like model.AgentStatus, model.UserRole, etc.
+	parsingFunc := func(v, f string) string {
+		return assignCode(f, fmt.Sprintf("%s(%s)", typeName, v), isPointer)
+	}
+	return GenerateExtractionCode(varName, fieldName, typeName, field, parsingFunc, imports)
 }
 
 // GenerateSliceCodeByType generates code to parse a slice of values
@@ -246,118 +258,84 @@ func GenerateCodeByType(varName, fieldName, typeName string, field *parser.Field
 // Returns: (code, imports)
 func GenerateSliceCodeByType(varName, fieldName, elementType string, field *parser.Field) (string, []string) {
 	var imports []string
-	var code string
+	var parse string
 
 	switch {
 	case IsStringType(elementType):
 		// For []string, direct assignment
-		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
+		return fmt.Sprintf(`if vals := %s; len(vals) > 0 {
 		payload.%s = vals
-	}`, varName, fieldName)
+	}`, varName, fieldName), imports
 
 	case IsIntType(elementType):
-		// For []int, []int64, etc. - parse each element
 		imports = append(imports, "strconv")
-		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]%s, 0, len(vals))
-		for i, val := range vals {
-			if parsed, err := strconv.ParseInt(val, 10, %s); err == nil {
-				payload.%s = append(payload.%s, %s(parsed))
-			} else {
+		parse = fmt.Sprintf(`n, err := strconv.ParseInt(val, 10, %s)
+			if err != nil {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
 			}
-		}
-	}`, varName, fieldName, elementType, IntBitSize(elementType), fieldName, fieldName, elementType, fieldName)
+			parsed := %s(n)`, IntBitSize(elementType), fieldName, elementType)
 
 	case IsUintType(elementType):
-		// For []uint, []uint64, etc. - parse each element
 		imports = append(imports, "strconv")
-		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]%s, 0, len(vals))
-		for i, val := range vals {
-			if parsed, err := strconv.ParseUint(val, 10, %s); err == nil {
-				payload.%s = append(payload.%s, %s(parsed))
-			} else {
+		parse = fmt.Sprintf(`n, err := strconv.ParseUint(val, 10, %s)
+			if err != nil {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
 			}
-		}
-	}`, varName, fieldName, elementType, IntBitSize(elementType), fieldName, fieldName, elementType, fieldName)
+			parsed := %s(n)`, IntBitSize(elementType), fieldName, elementType)
 
 	case IsFloatType(elementType):
-		// For []float32, []float64 - parse each element
 		imports = append(imports, "strconv")
 		bitSize := "64"
 		if elementType == "float32" {
 			bitSize = "32"
 		}
-		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]%s, 0, len(vals))
-		for i, val := range vals {
-			if parsed, err := strconv.ParseFloat(val, %s); err == nil {
-				payload.%s = append(payload.%s, %s(parsed))
-			} else {
+		parse = fmt.Sprintf(`f, err := strconv.ParseFloat(val, %s)
+			if err != nil {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
 			}
-		}
-	}`, varName, fieldName, elementType, bitSize, fieldName, fieldName, elementType, fieldName)
+			parsed := %s(f)`, bitSize, fieldName, elementType)
 
 	case IsBoolType(elementType):
-		// For []bool - parse each element
 		imports = append(imports, "strconv")
-		code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]bool, 0, len(vals))
-		for i, val := range vals {
-			if parsed, err := strconv.ParseBool(val); err == nil {
-				payload.%s = append(payload.%s, parsed)
-			} else {
+		parse = fmt.Sprintf(`parsed, err := strconv.ParseBool(val)
+			if err != nil {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
-			}
-		}
-	}`, varName, fieldName, fieldName, fieldName, fieldName)
+			}`, fieldName)
 
 	default:
-		// Check if there's a custom type extractor for the element type
 		if typeExtractor, ok := types.Get(elementType); ok {
-			// Add import if specified
+			// A registered ParseFunc assigns to payload.<field>. Each element
+			// is parsed into a one-field struct that stands in for the payload
+			// inside its own block, so the code it emits lands in "parsed".
 			if typeExtractor.Import != "" {
 				imports = append(imports, typeExtractor.Import)
 			}
-
-			// Generate code to parse each element in the slice using the custom parser
-			// The ParseFunc may include error handling with return statements
-			code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]%s, 0, len(vals))
-		for _, val := range vals {
-			var parsed %s
-			%s
-			payload.%s = append(payload.%s, parsed)
-		}
-	}`, varName, fieldName, elementType, elementType,
-				// Generate inline parsing code - the ParseFunc will assign to "parsed"
-				// and may include error handling with return statements
-				typeExtractor.ParseFunc("val", "parsed", false),
-				fieldName, fieldName)
+			parse = fmt.Sprintf(`_ = i
+			var elem struct{ Value %s }
+			{
+				payload := &elem
+				%s
+			}
+			parsed := elem.Value`, elementType, typeExtractor.ParseFunc("val", "Value", false))
 		} else if field.ImplementsTextUnmarshaler {
-			code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = make([]%s, 0, len(vals))
-		for i, val := range vals {
-			var parsed %s
+			parse = fmt.Sprintf(`var parsed %s
 			if err := parsed.UnmarshalText([]byte(val)); err != nil {
 				return fmt.Errorf("invalid %s[%%d]: %%w", i, err)
-			}
-			payload.%s = append(payload.%s, parsed)
-		}
-	}`, varName, fieldName, elementType, elementType, fieldName, fieldName, fieldName)
+			}`, elementType, fieldName)
 		} else {
-			// Fallback: for unknown types, assign the string slice as-is
-			// Users will need to handle conversion themselves in their handler
-			code = fmt.Sprintf(`if vals := %s; len(vals) > 0 {
-		payload.%s = vals
-	}`, varName, fieldName)
+			// Fallback: for unknown named types (e.g., enums), cast each value.
+			parse = fmt.Sprintf(`_ = i
+			parsed := %s(val)`, elementType)
 		}
 	}
 
-	return code, imports
+	return fmt.Sprintf(`if vals := %s; len(vals) > 0 {
+		payload.%s = make([]%s, 0, len(vals))
+		for i, val := range vals {
+			%s
+			payload.%s = append(payload.%s, parsed)
+		}
+	}`, varName, fieldName, elementType, parse, fieldName, fieldName), imports
 }
 
 // GenerateTextUnmarshalerParsing emits UnmarshalText assignment for path/query/header/form.
@@ -374,25 +352,6 @@ func GenerateTextUnmarshalerParsing(varName, fieldName, typeName string, isPoint
 		return fmt.Errorf("invalid %s: %%w", err)
 	}
 	payload.%s = parsed`, typeName, varName, fieldName, fieldName)
-}
-
-// GenerateDefaultValue generates code to set a default value
-func GenerateDefaultValue(fieldName, defaultValue, typeName string) string {
-	switch {
-	case strings.HasPrefix(typeName, "int") || strings.HasPrefix(typeName, "uint"):
-		return fmt.Sprintf(`payload.%s = %s`, fieldName, defaultValue)
-	case strings.HasPrefix(typeName, "float"):
-		return fmt.Sprintf(`payload.%s = %s`, fieldName, defaultValue)
-	case typeName == "bool":
-		return fmt.Sprintf(`payload.%s = %s`, fieldName, defaultValue)
-	case typeName == "string":
-		// Use strconv.Quote to properly escape the string value
-		// This prevents code injection if the default value contains quotes or special characters
-		escapedValue := strconv.Quote(defaultValue)
-		return fmt.Sprintf(`payload.%s = %s`, fieldName, escapedValue)
-	default:
-		return fmt.Sprintf(`payload.%s = %s`, fieldName, defaultValue)
-	}
 }
 
 // GetBaseType returns the base type without pointer or slice

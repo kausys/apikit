@@ -4,32 +4,28 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"path/filepath"
 
 	"golang.org/x/tools/go/packages"
 )
 
 // AnnotateTextUnmarshalers marks fields whose Go type implements
-// encoding.TextUnmarshaler (value or pointer receiver). It uses packages.Load
-// on the handler source file so aliases and methods defined in other packages
-// (e.g. kernel.TenantID = ID[P]) are resolved correctly.
+// encoding.TextUnmarshaler (value or pointer receiver). It type-checks the
+// handler's package so aliases and methods defined in other packages (e.g.
+// kernel.TenantID = ID[P]) are resolved correctly.
 func AnnotateTextUnmarshalers(filename string, result *ParseResult) error {
+	return New().AnnotateTextUnmarshalers(filename, result)
+}
+
+// AnnotateTextUnmarshalers is the package-level function, with the
+// type-checked package kept for the next file of the same directory.
+func (p *Parser) AnnotateTextUnmarshalers(filename string, result *ParseResult) error {
 	if result == nil || filename == "" {
 		return nil
 	}
-
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps,
-	}
-	pkgs, err := packages.Load(cfg, "file="+filename)
-	if err != nil {
-		return fmt.Errorf("loading package for TextUnmarshaler detection: %w", err)
-	}
-	if len(pkgs) == 0 {
-		return nil
-	}
-	pkg := pkgs[0]
-	if pkg.Types == nil {
-		return nil
+	pkg, err := p.loadTypes(filename)
+	if err != nil || pkg == nil || pkg.Types == nil {
+		return err
 	}
 	// Stale *_apikit.go in the same package often fails typecheck while we
 	// regenerate (e.g. invalid string casts). Types are usually still
@@ -40,6 +36,41 @@ func AnnotateTextUnmarshalers(filename string, result *ParseResult) error {
 		annotateStructFields(result.Handlers[i].Struct, pkg, iface)
 	}
 	return nil
+}
+
+// loadTypes type-checks the package in filename's directory, once per
+// directory.
+//
+// Only that package is checked from source; its dependencies come from the
+// compiler's export data, which the build cache already holds. Checking every
+// dependency from source, once per file, is what made a large tree take
+// minutes.
+func (p *Parser) loadTypes(filename string) (*packages.Package, error) {
+	abs, err := filepath.Abs(filename)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", filename, err)
+	}
+	dir := filepath.Dir(abs)
+	if pkg, ok := p.typed[dir]; ok {
+		return pkg, nil
+	}
+
+	// Loaded from the package's own directory, so its module is the one
+	// that resolves it whatever directory apikit was started from.
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedImports,
+		Dir:  dir,
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		return nil, fmt.Errorf("loading package for TextUnmarshaler detection: %w", err)
+	}
+	var pkg *packages.Package
+	if len(pkgs) > 0 {
+		pkg = pkgs[0]
+	}
+	p.typed[dir] = pkg
+	return pkg, nil
 }
 
 // textUnmarshalerIface builds encoding.TextUnmarshaler's method set without

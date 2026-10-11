@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"go/format"
 	"log"
+	"path"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -22,6 +24,12 @@ import (
 
 //go:embed templates/http_handler.tmpl
 var httpHandlerTemplate string
+
+// FormatVersion names the shape of the code this package generates. Raise it
+// whenever the same source would generate different code: it is part of the
+// checksum a wrapper records, so every wrapper is regenerated on the next run
+// instead of being skipped as up to date.
+const FormatVersion = "2"
 
 // Generator generates wrapper code for handlers using http.Handler
 type Generator struct {
@@ -132,9 +140,14 @@ func (g *Generator) prepareTemplateData(result *parser.ParseResult) (*TemplateDa
 		data.Handlers = append(data.Handlers, hd)
 	}
 
-	// Convert imports map to slice and sort alphabetically for deterministic output
+	// Convert imports map to import specs, sorted for deterministic output. A
+	// key is a path, or "alias path" when the file must name it otherwise.
 	for imp := range importsMap {
-		data.Imports = append(data.Imports, imp)
+		if alias, path, ok := strings.Cut(imp, " "); ok {
+			data.Imports = append(data.Imports, alias+" "+strconv.Quote(path))
+			continue
+		}
+		data.Imports = append(data.Imports, strconv.Quote(imp))
 	}
 	slices.Sort(data.Imports)
 
@@ -167,6 +180,16 @@ func (g *Generator) prepareHandlerData(handler *parser.Handler, importsMap map[s
 			"handler %s: payload type %q was never resolved to a struct; "+
 				"generating it would produce a wrapper that parses nothing",
 			handler.Name, handler.ParamType)
+	}
+
+	// A payload from another package is named by the handler's file through
+	// an import; the wrapper needs the same one.
+	if handler.ParamImport != "" {
+		key := handler.ParamImport
+		if handler.ParamImportAlias != "" && handler.ParamImportAlias != path.Base(handler.ParamImport) {
+			key = handler.ParamImportAlias + " " + handler.ParamImport
+		}
+		importsMap[key] = true
 	}
 
 	// Use extractors to generate code for each field
@@ -415,14 +438,21 @@ func (g *Generator) hasBodyFields(s *parser.Struct) bool {
 			return true
 		}
 
-		if field.StructTag != "" {
-			tag := reflect.StructTag(field.StructTag)
-			if jsonTag, ok := tag.Lookup("json"); ok && jsonTag == "body" {
-				return true
-			}
+		if isBodyTagged(&field) {
+			return true
 		}
 	}
 	return false
+}
+
+// isBodyTagged reports a field named "body" on the wire, whatever options
+// follow the name: json:"body,omitempty" is as much the body as json:"body".
+func isBodyTagged(field *parser.Field) bool {
+	if field.StructTag == "" {
+		return false
+	}
+	name, _, _ := strings.Cut(reflect.StructTag(field.StructTag).Get("json"), ",")
+	return name == "body"
 }
 
 // findBodyField searches for a body field in the struct
@@ -442,11 +472,8 @@ func (g *Generator) findBodyField(s *parser.Struct) string {
 		}
 
 		// Check if field has json:"body" tag
-		if field.StructTag != "" {
-			tag := reflect.StructTag(field.StructTag)
-			if jsonTag, ok := tag.Lookup("json"); ok && jsonTag == "body" {
-				return field.Name
-			}
+		if isBodyTagged(&field) {
+			return field.Name
 		}
 	}
 	return ""
@@ -473,11 +500,14 @@ func (g *Generator) findRawBodyField(s *parser.Struct) string {
 }
 
 // hasValidationTags checks if the struct has any validation tags
-// Returns true if any field has a validate tag
+// Returns true if any field has a validate tag, at any depth: the validator
+// descends into nested structs by itself, so a rule on a field of the body
+// counts even when nothing above it carries a tag. Only top-level tags used to
+// count, and a body's rules went unchecked unless the body field had one too.
 func (g *Generator) hasValidationTags(s *parser.Struct) bool {
 	for _, field := range s.Fields {
-		// Check embedded structs recursively
-		if field.IsEmbedded && field.NestedStruct != nil {
+		// Check nested and embedded structs recursively
+		if field.NestedStruct != nil {
 			if g.hasValidationTags(field.NestedStruct) {
 				return true
 			}

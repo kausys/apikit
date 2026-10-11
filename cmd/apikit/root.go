@@ -30,6 +30,13 @@ Example:
   # Generate OpenAPI specification
   apikit openapi gen -o openapi.yaml`,
 	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	// main reports the error once; cobra would print it again.
+	SilenceErrors: true,
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+		// The flags parsed: from here a failure is the command's, and the
+		// usage text would only bury it.
+		cmd.SilenceUsage = true
+	},
 }
 
 //nolint:gochecknoinits // cobra flag registration requires init

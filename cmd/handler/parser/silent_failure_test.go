@@ -20,11 +20,10 @@ func parseSource(t *testing.T, content string) *ParseResult {
 	return result
 }
 
-// A payload type declared outside the handler's file used to produce a wrapper
-// whose parse function was `return nil` — no extraction, no body unmarshal, no
-// validation — which COMPILED and served requests with a zero payload. The
-// lookup is file-scoped and cannot be made to work here, so the only safe
-// outcome is refusing to generate.
+// A payload type apikit cannot find used to produce a wrapper whose parse
+// function was `return nil` — no extraction, no body unmarshal, no validation —
+// which COMPILED and served requests with a zero payload. The only safe outcome
+// is refusing to generate.
 func TestPayloadDeclaredElsewhereIsAnError(t *testing.T) {
 	result := parseSource(t, `package test
 
@@ -47,8 +46,8 @@ func (h *handler) createUser(ctx context.Context, req CreateUserRequest) (any, e
 	}
 }
 
-// A qualified type reduces to its bare name during lookup (`dto.Foo` -> `Foo`),
-// so it is never found either — same silent wrapper, same refusal.
+// A qualified type from a package outside the module cannot be read either —
+// same silent wrapper, same refusal.
 func TestQualifiedPayloadTypeIsAnError(t *testing.T) {
 	result := parseSource(t, `package test
 
@@ -134,5 +133,56 @@ func helper(x int) (any, error) { return nil, nil }
 	if len(result.Errors) != 0 || len(result.Handlers) != 0 {
 		t.Errorf("unannotated function should be invisible, got errors=%v handlers=%d",
 			result.Errors, len(result.Handlers))
+	}
+}
+
+// A payload whose fields carry json names and no binding used to generate a
+// wrapper that parsed nothing: the body is decoded into the field named "body"
+// and nowhere else.
+func TestJSONFieldsWithoutABodyAreAnError(t *testing.T) {
+	result := parseSource(t, `package test
+
+import "context"
+
+type LoginRequest struct {
+	Email    string `+"`"+`json:"email"`+"`"+`
+	Password string `+"`"+`json:"password"`+"`"+`
+}
+
+// apikit:handler
+func Login(ctx context.Context, req LoginRequest) (any, error) {
+	return nil, nil
+}
+`)
+
+	if len(result.Handlers) != 0 {
+		t.Errorf("handler must not be generated, got %d", len(result.Handlers))
+	}
+	if len(result.Errors) != 2 || !strings.Contains(result.Errors[0], "Email") {
+		t.Fatalf("want one error per unbound field, got %v", result.Errors)
+	}
+}
+
+// A handler that takes the request can read the body itself.
+func TestJSONFieldsWithTheRequestAreAccepted(t *testing.T) {
+	result := parseSource(t, `package test
+
+import (
+	"context"
+	"net/http"
+)
+
+type LoginRequest struct {
+	Email string `+"`"+`json:"email"`+"`"+`
+}
+
+// apikit:handler
+func Login(ctx context.Context, req LoginRequest, r *http.Request) (any, error) {
+	return nil, nil
+}
+`)
+
+	if len(result.Errors) != 0 || len(result.Handlers) != 1 {
+		t.Fatalf("want the handler and no error, got errors=%v", result.Errors)
 	}
 }
