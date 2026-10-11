@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.10.0](https://github.com/kausys/apikit/compare/v0.9.4...v0.10.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+* **runtime:** responses use encoding/json/v2 semantics and request bodies are decoded strictly; a non-API error renders as "internal server error"; failures are logged without the payload, client errors only through a DebugLogger.
+* **handler:** wrappers need the runtime of this release; a payload with json-tagged fields outside the body is refused.
+* **openapi:** parameters follow binding tags; --strict fails on unresolved response types and invalid documents; the openapi status command and the cache package are removed.
+
+### Bug Fixes
+
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([dbcc01f](https://github.com/kausys/apikit/commit/dbcc01f01e59dbbcafaf196c56912124877d7971))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([59b62cc](https://github.com/kausys/apikit/commit/59b62cc64542fe86f0fb50ad3f10d5cba833ae3d))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([4e90144](https://github.com/kausys/apikit/commit/4e90144352c4a5d2557e15e3ce985b6a1ccdb163))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([9ff70b8](https://github.com/kausys/apikit/commit/9ff70b80f55692f08cbe92c2476d6ca75f134629))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([daace76](https://github.com/kausys/apikit/commit/daace76897ccf13bc3d0329cea703894ccef3b8a))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([5e8f104](https://github.com/kausys/apikit/commit/5e8f104bfcc69159962de5b81c188a7fc3f2ceb3))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([fff6f40](https://github.com/kausys/apikit/commit/fff6f405154dc44e0f9711132bc83150dda0c8a8))
+* **deps:** declare go 1.27, update dependencies, and let go install build the CLI ([2a9fc8e](https://github.com/kausys/apikit/commit/2a9fc8ed9627c0b31e6bdaac6e7fed22d3b7801f))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([dbcc01f](https://github.com/kausys/apikit/commit/dbcc01f01e59dbbcafaf196c56912124877d7971))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([59b62cc](https://github.com/kausys/apikit/commit/59b62cc64542fe86f0fb50ad3f10d5cba833ae3d))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([4e90144](https://github.com/kausys/apikit/commit/4e90144352c4a5d2557e15e3ce985b6a1ccdb163))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([9ff70b8](https://github.com/kausys/apikit/commit/9ff70b80f55692f08cbe92c2476d6ca75f134629))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([daace76](https://github.com/kausys/apikit/commit/daace76897ccf13bc3d0329cea703894ccef3b8a))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([5e8f104](https://github.com/kausys/apikit/commit/5e8f104bfcc69159962de5b81c188a7fc3f2ceb3))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([fff6f40](https://github.com/kausys/apikit/commit/fff6f405154dc44e0f9711132bc83150dda0c8a8))
+* **handler:** generate wrappers that compile, bind what they say, and stay current ([2a9fc8e](https://github.com/kausys/apikit/commit/2a9fc8ed9627c0b31e6bdaac6e7fed22d3b7801f))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([dbcc01f](https://github.com/kausys/apikit/commit/dbcc01f01e59dbbcafaf196c56912124877d7971))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([59b62cc](https://github.com/kausys/apikit/commit/59b62cc64542fe86f0fb50ad3f10d5cba833ae3d))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([4e90144](https://github.com/kausys/apikit/commit/4e90144352c4a5d2557e15e3ce985b6a1ccdb163))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([9ff70b8](https://github.com/kausys/apikit/commit/9ff70b80f55692f08cbe92c2476d6ca75f134629))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([daace76](https://github.com/kausys/apikit/commit/daace76897ccf13bc3d0329cea703894ccef3b8a))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([5e8f104](https://github.com/kausys/apikit/commit/5e8f104bfcc69159962de5b81c188a7fc3f2ceb3))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([fff6f40](https://github.com/kausys/apikit/commit/fff6f405154dc44e0f9711132bc83150dda0c8a8))
+* **openapi:** document what the handlers bind, fail instead of degrading, and drop the unused cache ([2a9fc8e](https://github.com/kausys/apikit/commit/2a9fc8ed9627c0b31e6bdaac6e7fed22d3b7801f))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([dbcc01f](https://github.com/kausys/apikit/commit/dbcc01f01e59dbbcafaf196c56912124877d7971))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([59b62cc](https://github.com/kausys/apikit/commit/59b62cc64542fe86f0fb50ad3f10d5cba833ae3d))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([4e90144](https://github.com/kausys/apikit/commit/4e90144352c4a5d2557e15e3ce985b6a1ccdb163))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([9ff70b8](https://github.com/kausys/apikit/commit/9ff70b80f55692f08cbe92c2476d6ca75f134629))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([daace76](https://github.com/kausys/apikit/commit/daace76897ccf13bc3d0329cea703894ccef3b8a))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([5e8f104](https://github.com/kausys/apikit/commit/5e8f104bfcc69159962de5b81c188a7fc3f2ceb3))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([fff6f40](https://github.com/kausys/apikit/commit/fff6f405154dc44e0f9711132bc83150dda0c8a8))
+* **runtime:** read and write JSON with encoding/json/v2, and stop errors leaking or racing ([2a9fc8e](https://github.com/kausys/apikit/commit/2a9fc8ed9627c0b31e6bdaac6e7fed22d3b7801f))
+* **swagger:** pin and verify the Swagger UI download ([dbcc01f](https://github.com/kausys/apikit/commit/dbcc01f01e59dbbcafaf196c56912124877d7971))
+* **swagger:** pin and verify the Swagger UI download ([59b62cc](https://github.com/kausys/apikit/commit/59b62cc64542fe86f0fb50ad3f10d5cba833ae3d))
+* **swagger:** pin and verify the Swagger UI download ([4e90144](https://github.com/kausys/apikit/commit/4e90144352c4a5d2557e15e3ce985b6a1ccdb163))
+* **swagger:** pin and verify the Swagger UI download ([9ff70b8](https://github.com/kausys/apikit/commit/9ff70b80f55692f08cbe92c2476d6ca75f134629))
+* **swagger:** pin and verify the Swagger UI download ([daace76](https://github.com/kausys/apikit/commit/daace76897ccf13bc3d0329cea703894ccef3b8a))
+* **swagger:** pin and verify the Swagger UI download ([5e8f104](https://github.com/kausys/apikit/commit/5e8f104bfcc69159962de5b81c188a7fc3f2ceb3))
+* **swagger:** pin and verify the Swagger UI download ([fff6f40](https://github.com/kausys/apikit/commit/fff6f405154dc44e0f9711132bc83150dda0c8a8))
+* **swagger:** pin and verify the Swagger UI download ([2a9fc8e](https://github.com/kausys/apikit/commit/2a9fc8ed9627c0b31e6bdaac6e7fed22d3b7801f))
+
 ## [0.9.4](https://github.com/kausys/apikit/compare/v0.9.3...v0.9.4) (2026-09-16)
 
 
