@@ -118,7 +118,7 @@ func TestSanitize_EmbeddedStruct(t *testing.T) {
 	}
 
 	m := Sanitize(Extended{
-		Base:  Base{ID: 1},
+		ID:    1,
 		Name:  "test",
 		Token: "secret",
 	}).(map[string]any)
@@ -131,7 +131,7 @@ func TestSanitize_EmbeddedStruct(t *testing.T) {
 func TestSanitize_UnexportedFields(t *testing.T) {
 	type Payload struct {
 		Public  string `json:"public"`
-		private string //nolint:unused
+		private string //nolint:unused // present so the test proves an unexported field is skipped
 	}
 
 	m := Sanitize(Payload{Public: "yes"}).(map[string]any)

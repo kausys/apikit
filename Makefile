@@ -1,20 +1,11 @@
-.PHONY: build test lint lint-fix fmt tidy install clean ci setup check-tidy version
+.PHONY: build test test-coverage lint lint-fix fmt tidy install clean ci setup work check-tidy version
 
 # Root module is "." — sub-modules are in their own directories
-ROOT_MODULE := .
 SUB_MODULES := cmd
-ALL_MODULES := $(ROOT_MODULE) $(SUB_MODULES)
 
-define run_in_module
-	@for m in $(ALL_MODULES); do \
-		echo "→ $(1) $$m"; \
-		if [ "$$m" = "." ]; then \
-			$(2) \
-		else \
-			(cd $$m && $(3)); \
-		fi \
-	done
-endef
+# Keep in sync with the version in .github/workflows/lint.yml — otherwise local
+# lint and CI can disagree about the same tree.
+GOLANGCI_LINT_VERSION := v2.14.0
 
 build:
 	@go build ./...
@@ -38,35 +29,32 @@ test-coverage:
 	done
 
 lint:
-	@golangci-lint run --config .golangci.yml ./...
+	@golangci-lint run --config $(CURDIR)/.golangci.yml ./...
 	@for m in $(SUB_MODULES); do \
 		echo "→ Linting $$m"; \
-		(cd $$m && golangci-lint run --config ../.golangci.yml ./...); \
+		(cd $$m && golangci-lint run --config $(CURDIR)/.golangci.yml ./...); \
 	done
 
 lint-fix:
-	@golangci-lint run --fix --config .golangci.yml ./...
+	@golangci-lint run --fix --config $(CURDIR)/.golangci.yml ./...
 	@for m in $(SUB_MODULES); do \
 		echo "→ Lint-fixing $$m"; \
-		(cd $$m && golangci-lint run --fix --config ../.golangci.yml ./...); \
+		(cd $$m && golangci-lint run --fix --config $(CURDIR)/.golangci.yml ./...); \
 	done
 
 fmt:
 	@gofmt -w .
-	@for m in $(SUB_MODULES); do \
-		echo "→ Formatting $$m"; \
-		(cd $$m && gofmt -w .); \
-	done
 
+# Each module is tidied as its users see it: without the workspace.
 tidy:
-	@go mod tidy
+	@GOWORK=off go mod tidy
 	@for m in $(SUB_MODULES); do \
 		echo "→ Tidying $$m"; \
-		(cd $$m && go mod tidy); \
+		(cd $$m && GOWORK=off go mod tidy); \
 	done
 
 install:
-	cd cmd && go install .
+	cd cmd && go install ./apikit
 
 clean:
 	@find . -name "coverage.out" -delete
@@ -74,16 +62,22 @@ clean:
 
 ci: fmt lint check-tidy test
 
-setup:
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+setup: work
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install github.com/evilmartians/lefthook@latest
 	lefthook install
 
+# cmd requires the last release of the root module. The workspace builds and
+# tests it against the root module in this tree instead; it stays local
+# (.gitignore), because a go.work inside a module zip breaks its users.
+work:
+	@test -f go.work || go work init . $(SUB_MODULES)
+
 check-tidy:
-	@go mod tidy && git diff --exit-code go.mod go.sum
+	@GOWORK=off go mod tidy && git diff --exit-code -- go.mod go.sum
 	@for m in $(SUB_MODULES); do \
 		echo "→ Checking tidy $$m"; \
-		(cd $$m && go mod tidy && git diff --exit-code go.mod go.sum); \
+		(cd $$m && GOWORK=off go mod tidy && git diff --exit-code -- go.mod go.sum); \
 	done
 
 version:

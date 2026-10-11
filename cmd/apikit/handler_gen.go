@@ -348,7 +348,7 @@ func handlerGenerateWithParser(p *parser.Parser, sourceFilePath string) error {
 		log.Printf("Writing %s...", output) //nolint:gosec // output path validated before use
 	}
 
-	if err := os.WriteFile(filepath.Clean(output), code, 0600); err != nil { //nolint:gosec // path validated before use
+	if err := os.WriteFile(filepath.Clean(output), code, 0600); err != nil {
 		return fmt.Errorf("writing output file: %w", err)
 	}
 

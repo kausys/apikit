@@ -13,23 +13,42 @@ jobs:
     name: Release CLI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
+          # go.mod names 1.27 with no patch: take the newest 1.27.x, not the
+          # one the runner happens to have cached.
+          check-latest: true
+
+      - name: Create go.work
+        run: go work init . cmd
 
       - name: Test
-        working-directory: cmd
-        run: go test -race ./...
+        run: |
+          go test -race ./...
+          (cd cmd && go test -race ./...)
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
+          args: --config ${{ github.workspace }}/.golangci.yml
+          version: v2.14.0 # keep in sync with GOLANGCI_LINT_VERSION in the Makefile
+
+      - name: Lint cmd
+        uses: golangci/golangci-lint-action@v9
+        with:
           working-directory: cmd
-          args: --config ../.golangci.yml
+          args: --config ${{ github.workspace }}/.golangci.yml
+          version: v2.14.0 # keep in sync with GOLANGCI_LINT_VERSION in the Makefile
+
+      # GoReleaser builds the binaries users download; they must be built from
+      # cmd's go.mod, as `go install` builds them, not from the workspace.
+      - name: Remove go.work
+        run: rm -f go.work go.work.sum
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7

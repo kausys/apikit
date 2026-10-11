@@ -1185,7 +1185,7 @@ func ListUsers() {}
 		require.NoError(t, err, "Expected JSON file %s to exist", filePath)
 
 		// Verify content is valid JSON
-		content, err := os.ReadFile(filePath) //nolint:gosec // test file path from tmpDir
+		content, err := os.ReadFile(filePath)
 		require.NoError(t, err)
 		assert.NotEmpty(t, content)
 		assert.Contains(t, string(content), "\"openapi\"")

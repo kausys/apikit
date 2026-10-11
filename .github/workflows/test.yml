@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+defaults:
+  run:
+    # PowerShell splits arguments like -coverprofile=coverage.out at the dot,
+    # so run every step through bash on all runners.
+    shell: bash
+
 jobs:
   test:
     name: Test (${{ matrix.module }}, ${{ matrix.os }})
@@ -14,21 +20,26 @@ jobs:
       SKIP_NETWORK_TESTS: "true"
     strategy:
       matrix:
-        go-version: ['1.26']
         os: [ubuntu-latest, macos-latest, windows-latest]
         module:
           - .
           - cmd
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go-version }}
+          # The minor comes from go.mod, so CI cannot drift from the modules;
+          # go.mod names 1.27 with no patch, so take the newest 1.27.x rather
+          # than the one the runner happens to have cached.
+          go-version-file: go.mod
+          check-latest: true
           cache: false
 
+      # cmd requires the last release of the root module; the workspace tests
+      # it against the root module in this tree.
       - name: Create go.work
         run: go work init . cmd
 
@@ -42,11 +53,10 @@ jobs:
           GOWORK: off
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum
+          git diff --exit-code -- go.mod go.sum
 
       - name: Build
         working-directory: ${{ matrix.module }}
-        shell: bash
         run: |
           if [ "${{ matrix.module }}" = "cmd" ]; then
             go build -o "${RUNNER_TEMP}/" ./...
@@ -56,14 +66,39 @@ jobs:
 
       - name: Test
         working-directory: ${{ matrix.module }}
-        shell: bash
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
           files: ${{ matrix.module == '.' && 'coverage.out' || format('{0}/coverage.out', matrix.module) }}
           flags: ${{ matrix.module == '.' && 'root' || matrix.module }}
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # What `go install github.com/kausys/apikit/cmd/apikit@latest` does: build the
+  # CLI from cmd's go.mod alone. A replace directive there, or a requirement on
+  # a root release older than the code needs, fails here before it fails a user.
+  install:
+    name: Install the CLI as a user does
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build without the workspace
+        working-directory: cmd
+        env:
+          GOWORK: off
+        run: |
+          if grep -q '^replace' go.mod; then
+            echo "cmd/go.mod has a replace directive: go install @version refuses it"
+            exit 1
+          fi
+          go build -o "${RUNNER_TEMP}/apikit" ./apikit
+          "${RUNNER_TEMP}/apikit" --help >/dev/null

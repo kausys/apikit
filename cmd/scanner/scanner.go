@@ -371,8 +371,8 @@ func (s *Scanner) resolveEmbeddedType(structInfo *StructInfo, embeddedInfo *Embe
 
 	// Check by short name (without package prefix)
 	shortName := embeddedTypeName
-	if idx := strings.LastIndex(embeddedTypeName, "."); idx >= 0 {
-		shortName = embeddedTypeName[idx+1:]
+	if _, name, ok := strings.CutLast(embeddedTypeName, "."); ok {
+		shortName = name
 	}
 
 	if embedded, ok := s.Structs[shortName]; ok {

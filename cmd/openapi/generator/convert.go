@@ -77,8 +77,8 @@ func (g *Generator) applyMeta(openAPI *spec.OpenAPI, meta, fallbackMeta *scanner
 // shortTypeName returns the unqualified type name.
 // For "dto.Agent" returns "Agent", for "Agent" returns "Agent".
 func shortTypeName(typeName string) string {
-	if idx := strings.LastIndex(typeName, "."); idx >= 0 {
-		return typeName[idx+1:]
+	if _, name, ok := strings.CutLast(typeName, "."); ok {
+		return name
 	}
 	return typeName
 }
