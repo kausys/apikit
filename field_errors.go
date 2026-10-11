@@ -19,3 +19,12 @@ func FieldErrorsOf(err error) ([]validator.FieldError, bool) {
 	}
 	return nil, false
 }
+
+// ValidationFailed turns a failed validation into the error the client gets:
+// 422, with one entry per field when the validator reported them.
+func ValidationFailed(err error) error {
+	if valErr, ok := errors.AsType[validator.ValidationError](err); ok {
+		return UnprocessableEntity(valErr.Message).WithDetails(valErr.FieldErrors)
+	}
+	return UnprocessableEntity("validation failed").WithCause(err)
+}

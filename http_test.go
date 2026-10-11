@@ -3,10 +3,11 @@ package apikit
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -139,8 +140,12 @@ func TestWriteError(t *testing.T) {
 					t.Error("expected 'message' field in API error response")
 				}
 			} else {
-				if _, ok := response["error"]; !ok {
-					t.Error("expected 'error' field in standard error response")
+				// The same shape as an API error, and nothing of what failed.
+				if response["message"] != "internal server error" {
+					t.Errorf("expected the generic message, got %v", response["message"])
+				}
+				if strings.Contains(w.Body.String(), "something went wrong") {
+					t.Errorf("the internal error reached the client: %s", w.Body.String())
 				}
 			}
 		})
@@ -267,9 +272,10 @@ func TestWriteJSONWithStatus_EncodingError(t *testing.T) {
 
 	writeJSONWithStatus(context.Background(), w, http.StatusCreated, invalidData)
 
-	// Status should already be written
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected status 201, got %d", w.Code)
+	// Encoding happens before the status is written, so the failure is a 500
+	// rather than a 201 over a truncated body.
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
 	}
 }
 

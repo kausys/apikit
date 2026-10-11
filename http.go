@@ -2,10 +2,14 @@ package apikit
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"strings"
+	"sync/atomic"
 )
 
 // HttpResponse represents an HTTP response with status code, body, headers, and content type
@@ -75,74 +79,105 @@ type statusCoder interface {
 // ErrorRenderer turns a handler error into an HTTP response. Consumers register
 // their own (e.g. an RFC 7807 problem+json contract) via SetErrorRenderer
 // without changing generated code; the default reproduces apikit's built-in
-// error JSON, so an unset renderer behaves exactly as before.
+// error JSON.
 type ErrorRenderer interface {
 	RenderError(ctx context.Context, w http.ResponseWriter, err error)
 }
 
-// defaultErrorRenderer is the built-in renderer (status from statusCoder, else
-// 500) producing apikit's classic Error JSON.
+// defaultErrorRenderer is the built-in renderer: the status an error in the
+// chain declares through StatusCode, else 500, and apikit's Error JSON.
 type defaultErrorRenderer struct{}
 
 func (defaultErrorRenderer) RenderError(ctx context.Context, w http.ResponseWriter, err error) {
-	status := http.StatusInternalServerError
-	if sc, ok := err.(statusCoder); ok {
-		status = sc.StatusCode()
-	}
-	writeError(ctx, w, err, status)
+	writeError(ctx, w, err, statusOf(err))
 }
 
-// globalErrorRenderer is the package-level error renderer, defaults to built-in.
-var globalErrorRenderer ErrorRenderer = defaultErrorRenderer{}
+// rendererBox lets an interface value live in an atomic.Pointer.
+type rendererBox struct{ ErrorRenderer }
 
-// SetErrorRenderer overrides how errors are written for all generated handlers.
+// globalErrorRenderer is the package-level error renderer; empty means the
+// built-in one. Swapped atomically, like the logger.
+var globalErrorRenderer atomic.Pointer[rendererBox]
+
+// SetErrorRenderer overrides how errors are written for all generated
+// handlers. A nil renderer restores the built-in one.
 func SetErrorRenderer(r ErrorRenderer) {
 	if r == nil {
 		r = defaultErrorRenderer{}
 	}
-	globalErrorRenderer = r
+	globalErrorRenderer.Store(&rendererBox{r})
 }
 
 // GetErrorRenderer returns the current error renderer.
-func GetErrorRenderer() ErrorRenderer { return globalErrorRenderer }
+func GetErrorRenderer() ErrorRenderer {
+	if b := globalErrorRenderer.Load(); b != nil {
+		return b.ErrorRenderer
+	}
+	return defaultErrorRenderer{}
+}
 
 // WriteJSON writes a JSON response with default 200 OK status
 func WriteJSON(w http.ResponseWriter, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
+	body, err := marshalJSON(data)
+	if err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
-}
-
-// writeJSONWithStatus writes a JSON response with a specific status code
-func writeJSONWithStatus(ctx context.Context, w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Status already written, can't change it; log for observability
-		globalLogger.Error(ctx, "failed to encode JSON response", "error", err)
-	}
-}
-
-// writeError writes an error response with the given status code (built-in format).
-func writeError(ctx context.Context, w http.ResponseWriter, err error, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	// Check if it's the custom Error type
-	apiErr := &Error{}
-	if errors.As(err, &apiErr) {
-		if encErr := json.NewEncoder(w).Encode(apiErr); encErr != nil {
-			globalLogger.Error(ctx, "failed to encode error response", "error", encErr)
-		}
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
 
-	// Default error format
-	if encErr := json.NewEncoder(w).Encode(map[string]any{
-		"error": err.Error(),
-	}); encErr != nil {
-		globalLogger.Error(ctx, "failed to encode error response", "error", encErr)
+// writeJSONWithStatus writes a JSON response with a specific status code.
+//
+// The body is encoded before anything is written, so a value that cannot be
+// encoded answers 500 instead of the intended status over a truncated body.
+func writeJSONWithStatus(ctx context.Context, w http.ResponseWriter, status int, data any) {
+	body, err := marshalJSON(data)
+	if err != nil {
+		writeError(ctx, w, fmt.Errorf("encoding response: %w", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if bodyAllowed(status) {
+		_, _ = w.Write(body)
+	}
+}
+
+// internalMessage is what a client is told about a failure that is not its
+// own. What actually failed — a driver error, a path, a stack of wrapping — is
+// for the log, not for whoever sent the request.
+const internalMessage = "internal server error"
+
+// writeError writes an error response with the given status code (built-in format).
+//
+// An *Error in the chain is written as it is: its message was written for the
+// client. Any other error is written in the same shape. Below 500 it keeps its
+// message, which a type declaring its own status chose to show; from 500 up it
+// says only that the server failed, and the error itself goes to the logger.
+func writeError(ctx context.Context, w http.ResponseWriter, err error, status int) {
+	payload, ok := errors.AsType[*Error](err)
+	if !ok {
+		message := err.Error()
+		if status >= http.StatusInternalServerError {
+			GetLogger().Error(ctx, "request failed", "status", status, "error", err)
+			message = internalMessage
+		}
+		payload = &Error{Code: status, ErrorCode: http.StatusText(status), Message: message}
+	}
+
+	body, encErr := marshalJSON(payload)
+	if encErr != nil {
+		// Details the caller attached cannot be encoded: say what the status
+		// says rather than nothing.
+		GetLogger().Error(ctx, "failed to encode error response", "error", encErr)
+		body, _ = marshalJSON(&Error{Code: status, ErrorCode: http.StatusText(status), Message: payload.Message})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if bodyAllowed(status) {
+		_, _ = w.Write(body)
 	}
 }
 
@@ -155,7 +190,7 @@ func HandleError(w http.ResponseWriter, err error) {
 // HandleErrorCtx renders an error through the registered ErrorRenderer, passing
 // the request context (so renderers can read request_id, trace, etc.).
 func HandleErrorCtx(ctx context.Context, w http.ResponseWriter, err error) {
-	globalErrorRenderer.RenderError(ctx, w, err)
+	GetErrorRenderer().RenderError(ctx, w, err)
 }
 
 // HandleResponse handles both the response and error from a handler (no request
@@ -168,66 +203,115 @@ func HandleResponse(w http.ResponseWriter, response any, err error) {
 // the handler's error (via the registered ErrorRenderer) or its success
 // response, with the request context available throughout.
 func HandleResponseCtx(ctx context.Context, w http.ResponseWriter, response any, err error) {
-	// Handle error first
 	if err != nil {
 		HandleErrorCtx(ctx, w, err)
 		return
 	}
 
-	// Handle successful response
 	// Support both *HttpResponse (pointer) and HttpResponse (value)
 	var httpResp *HttpResponse
-	if ptr, ok := response.(*HttpResponse); ok {
-		httpResp = ptr
-	} else if val, ok := response.(HttpResponse); ok {
-		httpResp = &val
+	switch v := response.(type) {
+	case *HttpResponse:
+		httpResp = v
+	case HttpResponse:
+		httpResp = &v
+	}
+	if httpResp == nil {
+		writeJSONWithStatus(ctx, w, http.StatusOK, response)
+		return
 	}
 
-	if httpResp != nil {
-		// Set custom headers
-		for key, value := range httpResp.Headers {
-			w.Header().Set(key, value)
-		}
+	writeHTTPResponse(ctx, w, httpResp)
+}
 
-		// Emit cookies as individual Set-Cookie headers (multiple allowed).
-		for _, cookie := range httpResp.Cookies {
-			if cookie != nil {
-				http.SetCookie(w, cookie)
-			}
-		}
+// writeHTTPResponse writes a response a handler described with HttpResponse.
+func writeHTTPResponse(ctx context.Context, w http.ResponseWriter, resp *HttpResponse) {
+	status := resp.StatusCode
+	if status == 0 {
+		// A literal HttpResponse{Body: x} says nothing about the status;
+		// http.ResponseWriter would panic on 0.
+		status = http.StatusOK
+	}
 
-		// Set content type
-		contentType := httpResp.ContentType
-		if contentType == "" {
-			contentType = "application/json"
-		}
-		w.Header().Set("Content-Type", contentType)
+	contentType := resp.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
 
-		// Write status code
-		w.WriteHeader(httpResp.StatusCode)
-
-		// Write body if present
-		if httpResp.Body != nil {
-			if contentType == "application/json" {
-				if err := json.NewEncoder(w).Encode(httpResp.Body); err != nil {
-					// Status already written, can't change it
-					return
-				}
-			} else {
-				// For non-JSON, write as string or bytes
-				switch v := httpResp.Body.(type) {
-				case string:
-					_, _ = w.Write([]byte(v))
-				case []byte:
-					_, _ = w.Write(v)
-				default:
-					// Fallback to fmt.Fprint for other types
-					_, _ = fmt.Fprint(w, v)
-				}
-			}
+	var body []byte
+	if resp.Body != nil && bodyAllowed(status) {
+		var err error
+		if body, err = encodeBody(resp.Body, contentType); err != nil {
+			writeError(ctx, w, fmt.Errorf("encoding response: %w", err), http.StatusInternalServerError)
+			return
 		}
-	} else {
-		// Default: write JSON with 200 OK
-		writeJSONWithStatus(ctx, w, http.StatusOK, response)
+	}
+
+	for key, value := range resp.Headers {
+		w.Header().Set(key, value)
+	}
+	for _, cookie := range resp.Cookies {
+		if cookie != nil {
+			http.SetCookie(w, cookie)
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(status)
+	if body != nil {
+		_, _ = w.Write(body)
+	}
+}
+
+// encodeBody encodes a response body for its content type: JSON for any JSON
+// media type (application/json with parameters, application/problem+json), the
+// bytes as they are for strings, byte slices and readers, and the value's
+// default format otherwise.
+func encodeBody(body any, contentType string) ([]byte, error) {
+	if isJSON(contentType) {
+		return marshalJSON(body)
+	}
+	switch v := body.(type) {
+	case string:
+		return []byte(v), nil
+	case []byte:
+		return v, nil
+	case io.Reader:
+		return io.ReadAll(v)
+	default:
+		return fmt.Append(nil, v), nil
+	}
+}
+
+// isJSON reports whether a content type is JSON: application/json, or any
+// type with the +json structured suffix.
+func isJSON(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+// marshalJSON encodes a response with encoding/json/v2: a nil slice or map is
+// [] or {} rather than null, `omitempty` omits empty JSON values (use
+// `omitzero` for a zero number or false), strings are not HTML-escaped, and
+// invalid UTF-8 is an error rather than silently replaced. Map keys are sorted,
+// so the same value always encodes to the same bytes. The trailing newline is
+// the one json.Encoder wrote, kept so the bytes on the wire stay as they were.
+func marshalJSON(v any) ([]byte, error) {
+	body, err := json.Marshal(v, json.Deterministic(true))
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+// bodyAllowed reports whether a response with this status may carry a body.
+func bodyAllowed(status int) bool {
+	switch {
+	case status >= 100 && status < 200, status == http.StatusNoContent, status == http.StatusNotModified:
+		return false
+	default:
+		return true
 	}
 }
