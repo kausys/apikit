@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A container for the expected responses of an operation. The container maps a HTTP response code

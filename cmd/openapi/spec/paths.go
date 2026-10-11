@@ -3,7 +3,7 @@ package spec
 import (
 	"encoding/json"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Holds the relative paths to the individual endpoints and their operations.

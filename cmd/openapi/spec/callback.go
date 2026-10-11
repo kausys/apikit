@@ -3,7 +3,7 @@ package spec
 import (
 	"encoding/json"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A map of possible out-of band callbacks related to the parent operation. Each value in the map

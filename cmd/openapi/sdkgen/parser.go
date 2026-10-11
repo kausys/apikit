@@ -7,7 +7,7 @@ import (
 
 	"github.com/kausys/apikit/cmd/openapi/spec"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // parseSpec reads and parses an OpenAPI YAML spec file.

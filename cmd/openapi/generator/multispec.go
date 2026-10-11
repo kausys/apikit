@@ -11,7 +11,7 @@ import (
 	"github.com/kausys/apikit/cmd/openapi/spec"
 	"github.com/kausys/apikit/cmd/scanner"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // buildStructIndex builds the structsByNameAndSpec index for O(1) lookups.
