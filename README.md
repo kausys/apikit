@@ -3,488 +3,347 @@
 [![Tests](https://github.com/kausys/apikit/actions/workflows/test.yml/badge.svg)](https://github.com/kausys/apikit/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kausys/apikit)](https://goreportcard.com/report/github.com/kausys/apikit)
 
-Go toolkit for building APIs: HTTP handler generation, OpenAPI 3.1 spec generation, Go SDK generation, and runtime utilities.
+Go toolkit for building APIs: HTTP handler generation, OpenAPI 3.1 spec generation, Go SDK generation, and the runtime the generated code uses.
 
 ## Modules
 
-| Module | Import Path | Description |
-|--------|-------------|-------------|
-| **root** | `github.com/kausys/apikit` | Runtime: HTTP responses, errors, validation, logging, sanitization |
-| **scanner** | `github.com/kausys/apikit/scanner` | Go AST scanner for swagger directives |
-| **openapi** | `github.com/kausys/apikit/openapi` | OpenAPI 3.1 spec generation from scanned directives |
-| **handler** | `github.com/kausys/apikit/handler` | HTTP handler code generation from annotated functions |
-| **cmd** | `github.com/kausys/apikit/cmd` | CLI binary (`apikit`) |
+| Module | Import path | What |
+|--------|-------------|------|
+| **root** | `github.com/kausys/apikit` | Runtime: responses, errors, request bodies, validation, logging, sanitization, Swagger UI serving |
+| **cmd** | `github.com/kausys/apikit/cmd` | The `apikit` CLI and its generators (`handler`, `openapi`, `scanner`, `authz`, `sdkgen`) |
+
+Both are released together, at the same version. Require them at the same version too: generated wrappers call the runtime of their own release.
 
 ## Installation
 
 ```bash
-# CLI tool
+# As a tool of your module (recommended: the version is pinned in go.mod)
+go get -tool github.com/kausys/apikit/cmd/apikit@latest
+go tool apikit --help
+
+# Or as a binary
 go install github.com/kausys/apikit/cmd/apikit@latest
 
-# Runtime library (used by generated code)
+# The runtime the generated code imports
 go get github.com/kausys/apikit@latest
 ```
 
+Requires Go 1.27.
+
 ---
 
-## Root Module — Runtime
+## Runtime
 
 `github.com/kausys/apikit`
 
-The root module provides the runtime types and utilities that generated handler code depends on.
+### JSON
 
-### HTTP Responses
+Every body is read and written with `encoding/json/v2`:
+
+- **Reading** (`DecodeJSON`, used by generated wrappers): member names match field names exactly — `{"Email": …}` does not fill `json:"email"` —, an object that names a member twice is refused, and invalid UTF-8 is refused. Unknown members are ignored.
+- **Writing**: a nil slice or map is `[]` or `{}`, not `null`; `omitempty` omits empty JSON values (`""`, `null`, `[]`, `{}`), so use `omitzero` to omit a zero number or `false`; strings are not HTML-escaped; map keys are sorted.
+
+### Responses
 
 ```go
-import "github.com/kausys/apikit"
-
-// Return structured responses from handlers
-response := apikit.NewHttpResponse(http.StatusOK, data)
-response.WithHeader("X-Request-ID", reqID)
-response.WithContentType("application/json")
-
-// Write JSON directly
-apikit.WriteJSON(w, data)
-
-// Handle response/error from a handler call
-apikit.HandleResponse(w, response, err)
+// A body with a status, headers and cookies
+return apikit.NewHttpResponse(http.StatusCreated, user).
+    WithHeader("Location", "/users/"+user.ID).
+    WithCookie(sessionCookie), nil
 ```
+
+A handler that returns any other value answers 200 with it as JSON. The body is encoded before anything is written: a value that cannot be encoded answers 500, not the intended status over a truncated body. `204` and `304` carry no body.
 
 ### Errors
 
 ```go
-// Predefined error constructors
 apikit.BadRequest("invalid email format")
-apikit.NotFound("user not found")
+apikit.NotFound("user")                 // "user not found"
 apikit.Unauthorized("invalid token")
-apikit.Forbidden("insufficient permissions")
 apikit.Conflict("email already exists")
 apikit.UnprocessableEntity("validation failed")
-apikit.InternalError("database connection failed")
-apikit.TooManyRequests("rate limit exceeded")
-apikit.ServiceUnavailable("service down")
+apikit.PayloadTooLarge("request body too large")
+apikit.InternalError("could not save")
 
-// With details and chaining
 apikit.BadRequest("validation failed").
     WithDetails(fieldErrors).
     WithRequestID(reqID).
     WithCause(err)
 ```
 
+- The status comes from any `*apikit.Error` (or anything with `StatusCode() int`) in the error chain, wrapped or not.
+- Any other error answers 500 with `"internal server error"`; what failed goes to the logger, not to the client.
+- The predefined errors (`ErrUnauthorized`, `ErrForbidden`, …) are shared by every request: a `With*` call on one returns a copy, and `errors.Is(copy, apikit.ErrUnauthorized)` still holds.
+- Replace the error format with `apikit.SetErrorRenderer` — an RFC 7807 renderer, for instance. `apikit.FieldErrorsOf(err)` gives a renderer the validation failures.
+
+### Request bodies
+
+```go
+apikit.SetMaxBodyBytes(1 << 20)       // default 10 MiB
+apikit.SetMaxMultipartBytes(32 << 20) // default 64 MiB
+```
+
+A body over the limit is refused with 413. It is never cut short: a truncated JSON body used to be reported as malformed, and a truncated raw body reached the handler as if it were whole.
+
+### Logging
+
+```go
+apikit.SetLogger(apikit.NewSlogLogger(slog.Default()))
+```
+
+Generated wrappers report a request they could not serve through `apikit.LogFailure`, with the handler, method, path and error — never the payload. The level follows whose fault it was: an error that renders as 4xx goes to `Debug` when the logger implements `DebugLogger`, and nowhere otherwise; anything else goes to `Error`.
+
 ### Validation
 
 ```go
 import "github.com/kausys/apikit/validator"
 
-// Validate structs
 err := validator.StructCtx(ctx, &payload)
 
-// Register custom validations
-validator.RegisterValidation(func(v *validator.Validate) {
-    v.RegisterValidation("custom_rule", customFunc)
+validator.RegisterValidation(func(v *validator.Validate, tr ut.Translator) {
+    _ = v.RegisterValidation("slug", validSlug)
 })
 
-// Implement ValidEnum for enum types
+// Enums: implement IsValid (and optionally Values, for the message)
 type Status string
 func (s Status) IsValid() bool { return s == "active" || s == "inactive" }
 ```
 
-### Logging
-
-```go
-import "github.com/kausys/apikit"
-
-// Set a global logger (slog-style key-value pattern)
-apikit.SetLogger(myLogger)
-
-// Check if a logger is configured
-if apikit.LoggerEnabled() {
-    // ...
-}
-```
+Field names in validation errors are the JSON names, with nested paths (`address.city`).
 
 ### Sanitization
-
-Sanitize structs for safe logging using struct tags:
 
 ```go
 type CreateUserRequest struct {
     Email    string `json:"email"`
-    Password string `json:"password" log:"sensitive"` // → "[REDACTED]"
-    Internal string `json:"-"        log:"-"`          // → omitted
+    Password string `json:"password" log:"sensitive"` // "[REDACTED]"
+    Internal string `json:"-"`                         // omitted
 }
 
-// In log calls
 logger.Info("request", "payload", apikit.Sanitize(payload))
-// Output: {"email": "user@example.com", "password": "[REDACTED]"}
 ```
 
 | Tag | Behavior |
 |-----|----------|
-| `log:"-"` | Field omitted from output |
+| `log:"-"` | Field omitted |
 | `log:"sensitive"` | Value replaced with `[REDACTED]` |
+| `json:"-"` | Field omitted — kept off the wire, kept out of the log |
 | *(none)* | Value passed through |
 
-Supports nested structs, pointers, slices, and embedded structs. Uses `json` tag names as map keys.
+Structs are walked wherever they are: behind pointers and interfaces, in slices, arrays and map values. A type that renders itself (`time.Time`, a JSON or text marshaler, a `fmt.Stringer`, a `slog.LogValuer`) is kept as it is. Anything deeper than ten levels is `[TRUNCATED]`.
 
-### Swagger UI Handler
+### Swagger UI
 
 ```go
 import "github.com/kausys/apikit/swagger"
 
 //go:embed swagger-ui.zip
-var swaggerUIZip []byte
+var swaggerUI []byte
 
-handler, err := swagger.New(swaggerUIZip, swagger.Config{
-    BasePath:      "/swagger",
-    SpecPath:      "/openapi/specs",
-    ResourcesPath: "/openapi/resources",
-    Specs: map[string][]byte{
-        "Public API":   publicSpec,
-        "Internal API": internalSpec,
+//go:embed specs/public.yaml
+var publicSpec []byte
+
+h, err := swagger.New(swaggerUI, swagger.Config{
+    Specs: []swagger.Spec{
+        {Name: "Public API", Data: publicSpec},
     },
     DefaultSpec: "Public API",
 })
 
-// Option 1: Use with http.ServeMux
-handler.Routes(mux)
+// net/http
+h.Routes(mux)
 
-// Option 2: Use with chi or similar routers
-r.Mount("/swagger", http.StripPrefix("/swagger", http.HandlerFunc(handler.ServeUI)))
-r.Get("/openapi/specs", handler.ServeSpec)
-r.Get("/openapi/resources", handler.ServeResources)
+// chi
+r.Mount("/swagger", h)
+r.Get("/openapi/specs", h.ServeSpec)
+r.Get("/openapi/resources", h.ServeResources)
 ```
 
-### Time Parsing
+The handler writes `swagger-initializer.js` from the `Config` — the spec list, `SpecPath` and the default spec — so the UI always asks for the specs where they are served. It takes nothing from the page URL. Set `BundledInitializer` to serve the one inside the zip instead.
+
+---
+
+## Handler generation
+
+`apikit handler gen` writes, next to each file with annotated handlers, a `<file>_apikit.go` with one wrapper per handler: it binds the request, validates it, calls the handler and writes the response or the error.
 
 ```go
-t, err := apikit.NewTimeFromString("2024-01-15T10:30:00Z")
-// Supports: RFC3339, RFC3339Nano, 2006-01-02, 01/02/2006, etc.
+//go:generate go tool apikit handler gen
+
+type UpdateUserRequest struct {
+    UserID UserID         `path:"user_id" validate:"required"`
+    Fields []string       `query:"field"`
+    Limit  *int           `query:"limit" default:"20"`
+    Trace  string         `header:"X-Trace-Id"`
+    Body   UpdateUserBody `json:"body"`
+}
+
+type UpdateUserBody struct {
+    Name string `json:"name" validate:"required,min=2"`
+}
+
+// apikit:handler
+func (h *Handler) UpdateUser(ctx context.Context, req UpdateUserRequest) (User, error)
+```
+
+```go
+mux.Handle("PATCH /users/{user_id}", updateUserAPIKit(h.UpdateUser))
+```
+
+### Binding
+
+| Tag | Source |
+|-----|--------|
+| `path:"name"` | Path parameter (`r.PathValue`) |
+| `query:"name"` | Query string; a slice takes every value |
+| `header:"Name"` | Header; a slice takes every value |
+| `cookie:"name"` | Cookie |
+| `form:"name"` | Form field or file (`*multipart.FileHeader`) |
+| `json:"body"` | The JSON body is decoded into this field |
+| `default:"value"` | Used when the request leaves the value out, parsed like a sent value |
+
+- The body is decoded into the field named `body` (or marked `// in: body`) and nowhere else. A payload field with any other json name and no binding is refused at generation: it would never be filled. (A handler that also takes the `*http.Request` may read the body itself.)
+- A field type may be any scalar, a pointer to one, a slice, `time.Time`, `uuid.UUID`, a type registered in `types`, or any type implementing `encoding.TextUnmarshaler`; any other named type is converted from the string.
+- The payload, and every struct it uses, may be declared in any file of the handler's package, or in another package of the module.
+- Validation runs when any field at any depth has a `validate` tag.
+
+### Regeneration
+
+A wrapper records a checksum of what it was generated from — the generator's format, the framework, and the packages its types come from — and is skipped while that is unchanged. A file that loses its last handler loses its wrapper, and a wrapper whose source file is gone is removed.
+
+```bash
+go tool apikit handler gen ./...           # write what changed
+go tool apikit handler gen --check ./...   # CI: fail on a missing, stale or orphaned wrapper
 ```
 
 ---
 
-## Scanner Module
+## OpenAPI generation
 
-`github.com/kausys/apikit/scanner`
-
-Parses Go source files to extract swagger directives into structured data.
-
-```go
-import "github.com/kausys/apikit/scanner"
-
-s := scanner.New(
-    scanner.WithDir("."),
-    scanner.WithPattern("./..."),
-    scanner.WithIgnorePaths("vendor", "testdata"),
-)
-
-if err := s.Scan(); err != nil {
-    log.Fatal(err)
-}
-
-// Access results
-s.Meta       // *MetaInfo — API metadata
-s.Structs    // map[string]*StructInfo — models and parameters
-s.Routes     // map[string]*RouteInfo — API endpoints
-s.Enums      // map[string]*EnumInfo — enum definitions
-```
-
-### Swagger Directives
+`apikit openapi gen` scans for swagger directives and writes OpenAPI 3.1.
 
 ```go
 // swagger:meta
-// Title: My API
+//
+// Title: Users API
 // Version: 1.0.0
-// Description: API description
-// BasePath: /api/v1
+//
 // SecuritySchemes:
-//   BearerAuth:
+//   - name: oauth
 //     type: http
 //     scheme: bearer
 
-// swagger:model
-type User struct {
-    ID    string `json:"id"`
-    Email string `json:"email" example:"user@example.com"`
-}
-
-// swagger:enum
-type Status string
-const (
-    StatusActive   Status = "active"
-    StatusInactive Status = "inactive"
-)
-
-// swagger:parameters
-type GetUserParams struct {
-    // in: path
-    UserID string `json:"user_id" validate:"required,uuid"`
-}
-
-// swagger:route GET /users/{user_id} users GetUser
-// summary: Get a user by ID
+// UpdateUser changes a user.
+//
+// swagger:route PATCH /users/{user_id} users updateUser
+//
+// Security:
+//   - oauth: users.write
+//
 // Responses:
 //   200: User
 //   404: ErrorResponse
-// Security:
-//   BearerAuth
+//
+// apikit:handler
+func (h *Handler) UpdateUser(ctx context.Context, req UpdateUserRequest) (User, error)
 ```
 
-### Multi-Spec Support
+### Parameters from handlers
 
-Assign elements to specific specs using the `spec:` directive:
+A route declared on a handler needs no `swagger:parameters` struct: its parameters and body are read from the handler's request type, with the binding tags above. What is documented is what the wrapper parses. The body's struct, and the structs it refers to, become schemas without a `swagger:model` directive. A `swagger:parameters <operationId>` struct still takes precedence.
 
-```go
-// swagger:route GET /public/health public Health
-// spec: public
-// summary: Health check
+### Validation rules
 
-// swagger:route GET /internal/metrics internal Metrics
-// spec: internal
-// summary: Internal metrics
-```
+The rules of a `validate` tag become schema keywords for the kind of value they constrain:
 
----
+| Rule | string | array | object | number |
+|------|--------|-------|--------|--------|
+| `min`, `gte` | `minLength` | `minItems` | `minProperties` | `minimum` |
+| `max`, `lte` | `maxLength` | `maxItems` | `maxProperties` | `maximum` |
+| `gt`, `lt` | length ± 1 | count ± 1 | count ± 1 | `exclusiveMinimum`, `exclusiveMaximum` |
+| `len` | both lengths | both counts | both counts | — |
 
-## OpenAPI Module
+`oneof` becomes `enum`; `email`, `uuid`, `url`, `uri`, `ipv4`, `ipv6`, `hostname`, `datetime` become formats; `unique` becomes `uniqueItems`; rules after `dive` apply to the items.
 
-`github.com/kausys/apikit/openapi`
+### Strictness
 
-Generates OpenAPI 3.1 specifications from scanner output.
+- `--validate` fails when the document is invalid: an operation without responses, a path parameter the template does not name (or the reverse), a parameter declared twice, a `$ref` or security scheme that names nothing.
+- `--strict` also fails on everything that would silently degrade the spec: a package that does not type-check, a malformed `swagger:route`, a route without `spec:` under `--no-default`, and a declared response type that resolves to nothing.
+- `--check` writes nothing and fails when a spec on disk is not what the source generates.
 
-```go
-import "github.com/kausys/apikit/openapi"
+Specs are written only when they change. `--ignore` patterns match whole path segments of each package's import path and of each file path relative to `--dir`.
 
-doc, err := openapi.Generate(
-    openapi.WithDir("."),
-    openapi.WithPattern("./api/..."),
-    openapi.WithOutput("openapi.yaml", "yaml"),
-    openapi.WithCache(true),
-    openapi.WithFlatten(false),
-    openapi.WithValidation(true),
-    openapi.WithCleanUnused(true),
-    openapi.WithEnumRefs(true),
-)
-```
+### Custom types
 
-### Custom Type Mapping
-
-Create `.openapi.yaml` in your project root to map Go types to OpenAPI types:
+`.openapi.yaml` in the scanned directory:
 
 ```yaml
-custom_types:
-  # Short name (backward compatible)
+customTypes:
   decimal.Decimal:
     type: string
     format: decimal
     example: "123.45"
-
-  # Fully-qualified path (avoids collisions)
-  github.com/shopspring/decimal.Decimal:
-    type: string
-    format: decimal
-    example: "123.45"
 ```
 
-Or register programmatically:
+### A spec folder per binary
+
+```
+cmd/myapi/openapi/
+├── doc.go           // swagger:meta and the go:generate directives
+├── swagger.go       // //go:embed swagger-ui.zip and specs/*.yaml; swagger.New(...)
+├── swagger-ui.zip   // apikit swagger download
+└── specs/
+    ├── public.yaml
+    └── admin.yaml
+```
 
 ```go
-import "github.com/kausys/apikit/openapi/generator"
-
-generator.FieldType(decimal.Decimal{}, func(info *generator.TypeInfo) {
-    info.Type = "string"
-    info.Format = "decimal"
-    info.Example = "123.45"
-})
+//go:generate go tool apikit swagger download
+//go:generate go tool apikit openapi gen -d ../../.. -p ./... --multi-specs --no-default --clean-unused --strict -o ./specs/
 ```
 
-### Subpackages
-
-| Package | Purpose |
-|---------|---------|
-| `openapi/spec` | OpenAPI 3.1 type definitions (Schema, Paths, Components, etc.) |
-| `openapi/generator` | Spec generation engine, custom type registry |
-| `openapi/cache` | Incremental caching for large codebases |
-| `openapi/sdkgen` | Go SDK generation from OpenAPI specs |
-| `openapi/swagger` | Swagger UI asset management |
+`apikit swagger download` fetches the Swagger UI release this apikit pins and checks it against the checksum it knows, so the zip is the same on every machine. `--version latest` asks for the newest release; `--sha256` pins any other.
 
 ---
 
-## Handler Module
-
-`github.com/kausys/apikit/handler`
-
-Generates HTTP handler wrappers with request parsing, validation, and response handling.
-
-### Usage
-
-```go
-//go:generate apikit handler gen
-
-type GetUserRequest struct {
-    UserID string `path:"id" validate:"required,uuid"`
-    Fields string `query:"fields"`
-}
-
-type GetUserResponse struct {
-    ID   string `json:"id"`
-    Name string `json:"name"`
-}
-
-// apikit:handler
-func GetUser(ctx context.Context, req GetUserRequest) (GetUserResponse, error) {
-    return GetUserResponse{ID: req.UserID, Name: "John"}, nil
-}
-```
-
-```bash
-go generate ./...
-```
-
-### Routing
-
-```go
-// Standard http
-mux.HandleFunc("GET /users/{id}", getUserAPIKit(GetUser))
-
-// Fiber
-app.Get("/users/:id", getUserAPIKit(GetUser))
-
-// Gin
-router.GET("/users/:id", getUserAPIKit(GetUser))
-
-// Echo
-e.GET("/users/:id", getUserAPIKit(GetUser))
-```
-
-### Parameter Sources
-
-| Tag | Source |
-|-----|--------|
-| `path:"name"` | URL path parameter |
-| `query:"name"` | Query string |
-| `header:"name"` | HTTP header |
-| `cookie:"name"` | Cookie value |
-| `form:"name"` | Form field / multipart |
-| `json:"name"` | JSON body (auto-detected) |
-
-### Custom parameter types
-
-Path, query, header, cookie, and form values are strings. Codegen resolves them in this order:
-
-1. Built-in scalars (`string`, `int`, `bool`, …)
-2. Types registered in the extractor registry (`handler/types`)
-3. Types that implement `encoding.TextUnmarshaler` — emit `UnmarshalText` (no per-type registry entry)
-4. Fallback string cast (typical for string-backed enums)
-
-Implement `UnmarshalText` on typed IDs and similar value objects so they can sit on path/query fields directly:
-
-```go
-type TenantID struct{ /* … */ }
-
-func (id *TenantID) UnmarshalText(text []byte) error { /* parse */ return nil }
-
-type GetUserRequest struct {
-    WorkspaceID TenantID `path:"workspaceId" validate:"required"`
-    Status      Status   `query:"status"` // string enum → Status(val) cast
-}
-```
-
-JSON body fields already use `encoding.TextUnmarshaler` via `encoding/json`; this makes path/query/header/form match that behavior.
-
-### File Uploads
-
-```go
-type UploadRequest struct {
-    File  *multipart.FileHeader   `form:"file"`
-    Files []*multipart.FileHeader `form:"files"`
-}
-```
-
-### Raw HTTP Access
-
-```go
-type StreamRequest struct {
-    Request *http.Request
-    Writer  http.ResponseWriter
-    RawBody []byte
-}
-```
-
-### Subpackages
-
-| Package | Purpose |
-|---------|---------|
-| `handler/parser` | Parses Go files for `apikit:handler` annotations |
-| `handler/codegen` | Generates handler wrapper code from templates |
-| `handler/extractors` | Framework-specific parameter extraction (http, fiber, gin, echo) |
-| `handler/types` | Custom type extractor registry for parameter parsing |
-
----
-
-## CLI Reference
-
-### handler gen
+## CLI reference
 
 ```
-apikit handler gen [flags]
-
-Flags:
+apikit handler gen [files | dirs | dir/...] [flags]
   -f, --file string        Source file (defaults to $GOFILE)
-  -o, --output string      Output file (defaults to <source>_apikit.go)
+  -o, --output string      Output file (one source only)
       --framework string   http, fiber, gin, echo (default "http")
-      --force              Regenerate even if unchanged
-      --dry-run            Print without writing
-  -v, --verbose            Verbose output
-```
+      --force              Regenerate even if the inputs are unchanged
+      --check              Write nothing; fail on a missing, stale or orphaned wrapper
 
-### openapi gen
-
-```
 apikit openapi gen [flags]
+  -o, --output string      Output file, or the directory for --multi-specs (default "openapi.yaml")
+  -f, --format string      yaml or json (default "yaml")
+  -p, --pattern string     Package pattern (default "./...")
+  -d, --dir string         Root directory (default ".")
+      --ignore strings     Path patterns to ignore
+      --clean-unused       Remove unreferenced schemas
+      --multi-specs        One spec per spec: directive
+      --spec string        Generate one spec only
+      --no-default         Skip the spec of routes without spec:
+      --enum-refs          Enums as $ref
+      --validate           Fail on an invalid document
+      --strict             Fail on any silent loss (implies --validate)
+      --check              Write nothing; fail on a stale spec
+apikit openapi clean       Remove the .openapi directory older versions left
 
-Flags:
-  -o, --output string       Output file (default "openapi.yaml")
-  -f, --format string       yaml or json (default "yaml")
-  -p, --pattern string      Package pattern (default "./...")
-  -d, --dir string          Root directory (default ".")
-      --no-cache            Disable caching
-      --flatten             Inline $ref schemas
-      --validate            Validate output
-      --ignore strings      Paths to ignore
-      --clean-unused        Remove unreferenced schemas
-      --multi-specs         Generate multiple specs
-      --spec string         Generate specific spec only
-      --no-default          Skip default spec
-      --enum-refs           Enums as $ref
-
-apikit openapi clean        Remove cache
-apikit openapi status       Show cache stats
-```
-
-### sdk gen
-
-```
-apikit sdk gen <config.sdkgen.yaml> -o <output-dir> [flags]
-
-Flags:
-  -o, --output string     Output directory (required)
-      --provider string   Override provider name
-```
-
-### swagger
-
-```
 apikit swagger download [flags]
+  -o, --output string      Output directory (default ".")
+      --version string     A release, or "latest" (default: the pinned one)
+      --sha256 string      Checksum the release archive must have
+      --with-defaults      Include the default initializer and CSS (default true)
+      --simple             Single-spec initializer
+apikit swagger version     Show the latest release
 
-Flags:
-  -o, --output string    Output directory (default ".")
-  -v, --version string   Version (default: latest)
-      --with-defaults    Include default initializer (default true)
-      --simple           Single-spec mode
+apikit sdk gen <config.sdkgen.yaml> -o <dir>
+apikit authz gen ...
 
-apikit swagger version   Show latest version
+Global: --dry-run, -v/--verbose
 ```
 
 ---
@@ -492,17 +351,16 @@ apikit swagger version   Show latest version
 ## Development
 
 ```bash
-make setup          # Install golangci-lint v2 + lefthook
-make build          # Build all modules
-make test           # Run all tests
-make test-coverage  # Tests with coverage
-make lint           # Lint all modules
-make lint-fix       # Auto-fix lint issues
-make fmt            # Format all modules
-make tidy           # go mod tidy all modules
-make ci             # Full CI check (fmt + lint + tidy + test)
-make install        # Install apikit binary locally
+make setup          # golangci-lint (pinned), lefthook, and the local go.work
+make build          # Build both modules
+make test           # Tests, with -race
+make lint           # Lint both modules
+make tidy           # go mod tidy, each module as its users see it
+make ci             # fmt + lint + check-tidy + test
+make install        # Install the apikit binary
 ```
+
+`cmd` requires the last release of the root module. The local `go.work` (`make work`) builds it against the root module in the tree instead; it is not committed, because a `go.work` inside a module zip breaks its users.
 
 ## License
 
